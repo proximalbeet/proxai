@@ -1,0 +1,23 @@
+# Allow-list: only the agent definition and its own tools are tracked.
+# Keys (.env), logins (auth.json), memory, sessions and Hermes bundled skills stay out.
+*
+!.gitignore
+!SOUL.md
+!config.yaml
+!profile.yaml
+!skills/
+# Your own skills: add two lines per skill folder, e.g.
+#   !skills/quote-calculator/
+#   !skills/quote-calculator/**
+!skills/knowledge/
+!skills/knowledge/**
+!skills/openclaw-imports/
+!skills/openclaw-imports/**
+
+# Never commit, even inside allowed folders
+.env
+*.pth
+*.onnx
+__pycache__/
+.venv/
+node_modules/
