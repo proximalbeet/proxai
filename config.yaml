@@ -1,5 +1,5 @@
 model:
-  default: claude-opus-4-8
+  default: claude-opus-5-5
   provider: anthropic
 fallback_providers: []
 toolsets:
@@ -318,7 +318,7 @@ memory:
   nudge_interval: 10
   flush_min_turns: 6
 delegation:
-  model: claude-sonnet-4-6
+  model: claude-sonnet-5-5
   provider: anthropic
   base_url: ''
   api_key: ''
