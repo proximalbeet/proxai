@@ -1,0 +1,59 @@
+{
+  "tiers": {
+    "tier1": {
+      "label": "Ollama / qwen3.5:9b",
+      "model": "qwen3.5:9b",
+      "provider": "ollama",
+      "base_url": "http://localhost:11434/v1",
+      "api_mode": "chat_completions"
+    },
+    "tier1-14b": {
+      "label": "Ollama / qwen3:14b-64k",
+      "model": "qwen3:14b-64k",
+      "provider": "ollama",
+      "base_url": "http://localhost:11434/v1",
+      "api_mode": "chat_completions"
+    },
+    "tier2": {
+      "label": "Claude Sonnet 5.5",
+      "model": "claude-sonnet-5-5",
+      "provider": "anthropic",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "vault_blocked_folders": ["01-Personal", "07-Security"]
+    },
+    "tier3": {
+      "label": "Claude Opus 5.5",
+      "model": "claude-opus-5-5",
+      "provider": "anthropic",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "vault_blocked_folders": ["01-Personal", "07-Security"]
+    }
+  },
+  "channels": {
+    "brain-dump":     "tier1",
+    "focus-sessions": "tier1",
+    "daily-goals":    "tier1",
+    "ollama-outputs": "tier1",
+    "model-logs":     "tier1",
+    "bot-commands":   "tier1",
+    "build-status":   "tier1",
+    "bot-audit-log":  "tier1",
+
+    "general-chat":    "tier2",
+    "vault-queries":   "tier2",
+    "research-drops":  "tier2",
+    "arduino-logs":    "tier2",
+    "build-errors":    "tier2",
+    "quest-dev-logs":  "tier2",
+    "vr-ideas":        "tier2",
+
+    "code-assist": "tier3"
+  },
+  "default_tier": "tier1",
+  "opus_override": {
+    "label": "Claude Opus 5.5 (escalated)",
+    "model": "claude-opus-5-5",
+    "provider": "anthropic",
+    "api_key_env": "ANTHROPIC_API_KEY"
+  }
+}

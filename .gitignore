@@ -3,6 +3,7 @@
 *
 !.gitignore
 !SOUL.md
+!SOUL.gru.md
 !config.yaml
 !profile.yaml
 !skills/
@@ -21,3 +22,14 @@
 __pycache__/
 .venv/
 node_modules/
+
+# Profile plugins
+!plugins/
+!plugins/discord-routing/
+!plugins/discord-routing/**
+__pycache__/
+
+# Voice pipeline scripts only (no models, reference audio or virtualenvs)
+!voice/
+!voice/tts_pipeline.py
+!voice/tts_rvc.py

@@ -1,5 +1,5 @@
 model:
-  default: claude-opus-5-5
+  default: claude-sonnet-5-5
   provider: anthropic
 fallback_providers: []
 toolsets:
@@ -256,7 +256,7 @@ dashboard:
 privacy:
   redact_pii: false
 tts:
-  provider: b1-battle-droid
+  provider: kanye
   edge:
     voice: en-US-AriaNeural
   elevenlabs:
@@ -281,11 +281,16 @@ tts:
   piper:
     voice: en_US-lessac-medium
   providers:
-    b1-battle-droid:
+    kanye:
       type: command
-      command: python3 /home/prox/dev/proxai/proxai/voice/tts_pipeline.py {input_path} {output_path}
+      command: /home/prox/.hermes/profiles/proxai/voice/.venv-chatterbox/bin/python /home/prox/.hermes/profiles/proxai/voice/tts_pipeline.py {input_path} {output_path} kanye
       output_format: wav
-      timeout: 60
+      timeout: 120
+    gru:
+      type: command
+      command: /home/prox/.hermes/profiles/proxai/voice/.venv/bin/python /home/prox/.hermes/profiles/proxai/voice/tts_rvc.py {input_path} {output_path} gru
+      output_format: wav
+      timeout: 120
 stt:
   enabled: true
   provider: local
@@ -450,6 +455,7 @@ sessions:
 onboarding:
   seen:
     openclaw_residue_cleanup: true
+    busy_input_prompt: true
 updates:
   pre_update_backup: false
   backup_keep: 5
@@ -552,6 +558,7 @@ _left_core_scoped:
 plugins:
   enabled:
     - homeassistant
+    - discord-routing
   disabled: []
 _left_core_installed:
   - homeassistant
