@@ -57,6 +57,7 @@ terminal:
     - /home/prox/Documents/ProxVault:/workspace/vault:ro
     - /home/prox/Documents/ProxVault/10-Wiki:/workspace/vault/10-Wiki:rw
     - /home/prox/Documents/ProxVault/_inbox:/workspace/vault/_inbox:rw
+    - /home/prox/Documents/ProxVault/05-Brain-Dump:/workspace/vault/05-Brain-Dump:rw
   docker_mount_cwd_to_workspace: false
   docker_extra_args: []
   docker_run_as_host_user: true
@@ -362,16 +363,14 @@ slack:
   allowed_channels: ''
 discord:
   require_mention: true
-  free_response_channels: ''
+  free_response_channels: '1500997799834157056'
   allowed_channels: ''
   auto_thread: true
   thread_require_mention: false
   history_backfill: true
   history_backfill_limit: 50
   reactions: true
-  channel_prompts:
-    '1500997799834157056': "This is the brain-dump capture channel. For every message:\n1. Save it as a note to /workspace/vault/_inbox/ — use write_file with a kebab-case filename and complete YAML frontmatter: type, title, area, status: inbox, created and updated as today in YYYY-MM-DD. Follow your Knowledge Management filing rules to classify type and area accurately.\n2. Then respond to the message content naturally and helpfully.\nAlways do both. Never skip the file save. Do not describe what you are doing — just do it, then answer.\n"
-    '1500658701483376640': "This is the vault-queries channel. When asked to create a dashboard, view, or kanban board:\n1. Generate a complete markdown note with YAML frontmatter (type: reference, area: knowledge,\n   status: inbox, title as human-readable string, created/updated as YYYY-MM-DD,\n   tags: [dashboard]) AND at least one Dataview query block in the body using\n   triple-backtick dataview fences.\n2. Write the file using write_file to EXACTLY: /workspace/vault/_inbox/<kebab-filename>.md\n   NEVER write to /workspace/vault/10-Wiki/ or anywhere else.\n3. Reply in Discord with the filename so the user knows what to open in Obsidian.\nFor vault search requests, say vault search is coming in Phase 5.\n"
+  channel_prompts: {}  # prompts live in plugins/discord-routing/routing.json (by channel name)
   dm_role_auth_guild: ''
   server_actions: ''
   allow_any_attachment: false

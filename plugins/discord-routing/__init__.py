@@ -5,6 +5,8 @@ Runs on ``pre_gateway_dispatch`` so no Hermes core files are modified:
   * picks a model tier from ``routing.json`` by channel name (threads use
     their parent channel's tier; DMs are left on the profile's default model)
   * ``!model`` replies with the channel's model, ``!opus <msg>`` escalates one message
+  * sets the channel prompt from ``routing.json`` ``prompts`` by channel name
+    (threads use their parent channel's prompt)
   * posts one line per routed message to #bot-audit-log
   * adds the vault privacy rule to the channel prompt for cloud tiers
 """
@@ -166,6 +168,11 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
         "[discord-routing] #%s → model: %s%s",
         channel_name, routing["label"], " (opus escalation)" if escalated else "",
     )
+
+    # A prompt in routing.json replaces any ID-keyed discord.channel_prompts entry.
+    channel_prompt = config.get("prompts", {}).get(channel_name)
+    if channel_prompt:
+        event.channel_prompt = channel_prompt
 
     # Cloud tiers carry vault_blocked_folders; !opus is always cloud, so it uses tier3's list.
     blocked = routing["vault_blocked_folders"] or (

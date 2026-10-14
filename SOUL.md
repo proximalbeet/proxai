@@ -262,6 +262,8 @@ All new notes land in `/workspace/vault/_inbox/` first — never directly in con
 | course | Structured learning material — lectures, modules, study notes. |
 | role | A job, responsibility, or position (current or past). |
 | reference | External source distilled to a lookup — spec, API, config, cheat sheet. |
+| focus-log | One focus session — task, start/end time, duration, what got done. |
+| daily | One day's goals as a checklist. |
 
 ### Filing table (type + area → final destination after refiling)
 
@@ -276,6 +278,10 @@ The refiler routes notes out of `_inbox/` to these folders based on `type` + `ar
 | project | any | 02-Projects/ |
 | role | any | 08-Roles/ |
 | reference | knowledge | 04-Knowledge/ — or 10-Wiki/references/ if wiki-worthy |
+| focus-log | any | 06-Focus-Logs/ |
+| daily | any | 00-Daily/ |
+
+Exception: captures from #brain-dump go straight to `/workspace/vault/05-Brain-Dump/` (that channel's prompt says so).
 
 ### Capture checklist
 
