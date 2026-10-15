@@ -235,7 +235,6 @@ display:
   tool_progress_overrides: {}
   tool_preview_length: 0
   ephemeral_system_ttl: 0
-  platforms: {}
   runtime_footer:
     enabled: false
     fields:
@@ -393,7 +392,8 @@ approvals:
   cron_mode: deny
   mcp_reload_confirm: true
   destructive_slash_confirm: true
-command_allowlist: []
+command_allowlist:
+  - script execution via -e/-c flag
 hooks_auto_accept: false
 security:
   allow_private_urls: false
@@ -490,11 +490,45 @@ streaming:
   enabled: false
 platform_toolsets:
   cli:
-    - hermes-cli
+    - browser
+    - clarify
+    - code_execution
+    - connections
+    - cronjob
+    - delegation
+    - file
+    - homeassistant
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
   telegram:
     - hermes-telegram
   discord:
-    - hermes-discord
+    - browser
+    - clarify
+    - code_execution
+    - connections
+    - cronjob
+    - delegation
+    - discord
+    - discord_admin
+    - file
+    - homeassistant
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
   whatsapp:
     - hermes-whatsapp
   slack:
@@ -511,6 +545,24 @@ platform_toolsets:
     - hermes-teams
   google_chat:
     - hermes-google_chat
+  cron:
+    - browser
+    - clarify
+    - code_execution
+    - connections
+    - cronjob
+    - delegation
+    - file
+    - homeassistant
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
 custom_providers:
   - name: prox-ai
     base_url: http://localhost:11434/v1
@@ -553,6 +605,18 @@ known_plugin_toolsets:
     - homeassistant
   webhook:
     - homeassistant
+  discord:
+    - a2a
+    - homeassistant
+    - spotify
+  cli:
+    - a2a
+    - homeassistant
+    - spotify
+  cron:
+    - a2a
+    - homeassistant
+    - spotify
 _left_core_scoped:
   - homeassistant
 plugins:
@@ -562,3 +626,88 @@ plugins:
   disabled: []
 _left_core_installed:
   - homeassistant
+known_builtin_toolsets:
+  discord:
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - connections
+    - context_engine
+    - cronjob
+    - delegation
+    - discord
+    - discord_admin
+    - file
+    - image_gen
+    - kanban
+    - memory
+    - session_search
+    - skills
+    - spotify
+    - stt
+    - terminal
+    - todo
+    - tts
+    - video
+    - video_gen
+    - vision
+    - web
+    - x_search
+    - yuanbao
+  cli:
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - connections
+    - context_engine
+    - cronjob
+    - delegation
+    - discord
+    - discord_admin
+    - file
+    - image_gen
+    - kanban
+    - memory
+    - session_search
+    - skills
+    - spotify
+    - stt
+    - terminal
+    - todo
+    - tts
+    - video
+    - video_gen
+    - vision
+    - web
+    - x_search
+    - yuanbao
+  cron:
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - connections
+    - context_engine
+    - cronjob
+    - delegation
+    - discord
+    - discord_admin
+    - file
+    - image_gen
+    - kanban
+    - memory
+    - session_search
+    - skills
+    - spotify
+    - stt
+    - terminal
+    - todo
+    - tts
+    - video
+    - video_gen
+    - vision
+    - web
+    - x_search
+    - yuanbao
