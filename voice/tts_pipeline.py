@@ -14,9 +14,12 @@ voice = reference clip name under reference/ (default: kanye -> reference/kanye.
 
 RVC voices without a reference clip (like Gru) use tts_rvc.py instead.
 """
+import json
 import os
 import re
 import sys
+import time
+import urllib.request
 from pathlib import Path
 
 # Everything lives next to this script, so it works no matter which folder
@@ -38,6 +41,41 @@ MAX_CHUNK_CHARS = 300
 
 # Silence inserted between chunks so stitched sentences don't run together.
 GAP_SECONDS = 0.25
+
+# Ollama keeps qwen3.5:9b (~7.5 GB) on the GPU for 5 minutes after each reply,
+# which leaves too little VRAM for Chatterbox (~3 GB) and makes it crash with
+# CUDA out of memory. Override the address with OLLAMA_HOST.
+OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+if not OLLAMA_URL.startswith("http"):
+    OLLAMA_URL = f"http://{OLLAMA_URL}"
+
+
+def ollama_request(path: str, body: dict | None = None) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"{OLLAMA_URL}{path}", data=data,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read() or b"{}")
+
+
+def free_ollama_vram(wait_seconds: float = 10) -> None:
+    """Unload every model Ollama has on the GPU (keep_alive 0), then wait for it to let go.
+
+    Best effort: if Ollama is down or slow, TTS still runs. The next qwen reply
+    reloads the model, which costs a few seconds.
+    """
+    try:
+        loaded = [m["name"] for m in ollama_request("/api/ps").get("models", [])]
+        for name in loaded:
+            ollama_request("/api/generate", {"model": name, "keep_alive": 0})
+        deadline = time.monotonic() + wait_seconds
+        while loaded and time.monotonic() < deadline:
+            time.sleep(0.5)
+            loaded = ollama_request("/api/ps").get("models", [])
+        if loaded:
+            print(f"warning: Ollama still has {len(loaded)} model(s) loaded", file=sys.stderr)
+    except OSError as exc:
+        print(f"warning: could not unload Ollama models: {exc}", file=sys.stderr)
 
 
 def split_into_chunks(text: str) -> list[str]:
@@ -72,6 +110,9 @@ def main() -> None:
     import numpy as np
     import soundfile as sf
     from chatterbox.tts import ChatterboxTTS
+
+    # Make room on the GPU first, or Chatterbox runs out of memory while qwen is loaded.
+    free_ollama_vram()
 
     # Loads the model on the GPU. The first run downloads it (about 3 GB) into
     # ~/.cache/huggingface, later runs load it from there.
