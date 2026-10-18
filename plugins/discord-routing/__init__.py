@@ -258,6 +258,11 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     if privacy:
         event.channel_prompt = f"{event.channel_prompt}\n\n{privacy}" if event.channel_prompt else privacy
 
+    # Tell the model which tools this channel allows (the guard enforces it either way).
+    tools_line = guard.policy.prompt_line(f"#{channel_name}")
+    if tools_line:
+        event.channel_prompt = f"{event.channel_prompt}\n\n{tools_line}" if event.channel_prompt else tools_line
+
     # Capture channels: the plugin saves the note, the model only replies.
     if not escalated:
         capture_prompt = await _run_capture(event, source, adapter, channel_name, config)

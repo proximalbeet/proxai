@@ -87,5 +87,112 @@
     "vault_path": "~/Documents/ProxVault",
     "log_folder": "07-Security/ProxAI-Audit",
     "alert_channel": "bot-audit-log"
+  },
+  "tool_policy": {
+    "_comment": "Per-channel tool allow-lists, enforced by the guard (pre_tool_call). Entries are tool names or toolset names. Unlisted channels use default_profile. DMs and cron jobs have no channel limits.",
+    "deny_everywhere": [
+      "discord_admin",
+      "computer_use"
+    ],
+    "always_allow": [
+      "report_security_event"
+    ],
+    "default_profile": "readonly",
+    "profiles": {
+      "none": [],
+      "capture": [
+        "read_file",
+        "search_files",
+        "clarify",
+        "tts"
+      ],
+      "readonly": [
+        "read_file",
+        "search_files",
+        "clarify",
+        "tts",
+        "web",
+        "session_search"
+      ],
+      "chat": [
+        "web",
+        "file",
+        "cronjob",
+        "session_search",
+        "memory",
+        "clarify",
+        "tts",
+        "todo",
+        "vision",
+        "skills_list",
+        "skill_view"
+      ],
+      "vault": [
+        "read_file",
+        "search_files",
+        "write_file",
+        "clarify",
+        "tts",
+        "session_search"
+      ],
+      "research": [
+        "web",
+        "file",
+        "clarify",
+        "tts",
+        "vision"
+      ],
+      "diagnose": [
+        "web",
+        "file",
+        "clarify",
+        "tts",
+        "vision",
+        "session_search"
+      ],
+      "ideas": [
+        "web",
+        "file",
+        "clarify",
+        "tts",
+        "vision",
+        "image_gen"
+      ],
+      "code": [
+        "web",
+        "file",
+        "terminal",
+        "code_execution",
+        "clarify",
+        "tts",
+        "vision",
+        "todo",
+        "delegation",
+        "skills",
+        "session_search"
+      ]
+    },
+    "channels": {
+      "brain-dump": "capture",
+      "daily-goals": "capture",
+      "focus-sessions": "capture",
+      "announcements": "none",
+      "build-status": "none",
+      "bot-audit-log": "none",
+      "sandbox-alerts": "none",
+      "model-logs": "none",
+      "ollama-outputs": "none",
+      "bot-commands": [
+        "skills_list"
+      ],
+      "general-chat": "chat",
+      "vault-queries": "vault",
+      "research-drops": "research",
+      "arduino-logs": "diagnose",
+      "build-errors": "diagnose",
+      "quest-dev-logs": "diagnose",
+      "vr-ideas": "ideas",
+      "code-assist": "code"
+    }
   }
 }

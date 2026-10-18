@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,7 +17,6 @@ class GuardTest(unittest.TestCase):
         self.vault = Path(self.tmp.name) / "vault"
         (self.vault / "07-Security").mkdir(parents=True)
         load_plugin()
-        import sys
         self.g = sys.modules["dr_test_pkg.guard"].Guard()
         self.g.configure({"security": {"vault_path": str(self.vault)}})
         self.alerts = []
@@ -86,6 +86,70 @@ class GuardTest(unittest.TestCase):
         self.env = {"HERMES_SESSION_PLATFORM": "discord", "HERMES_SESSION_CHAT_ID": "555",
                     "HERMES_SESSION_CHAT_NAME": "Server / #vr-ideas"}
         self.assertEqual(self.g.current_channel(), "#vr-ideas")
+
+    def use_real_policy(self):
+        cfg = json.loads((Path(__file__).resolve().parent / "routing.json").read_text())
+        cfg["security"]["vault_path"] = str(self.vault)
+        self.g.configure(cfg)
+        toolsets = {"web_search": "web", "terminal": "terminal", "write_file": "file", "read_file": "file",
+                    "discord_admin": "discord_admin", "delegate_task": "delegation"}
+        patcher = mock.patch.object(sys.modules["dr_test_pkg.guard"], "_toolset_of",
+                                    lambda n: toolsets.get(n, ""))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def at(self, channel):
+        self.g.remember("900", channel)
+
+    def test_log_channel_gets_no_tools(self):
+        self.use_real_policy()
+        self.at("build-status")
+        r = self.g.pre_tool_call(tool_name="write_file", args={"path": "/workspace/vault/_inbox/x.md"})
+        self.assertEqual(r["action"], "block")
+        self.assertIn("isn't allowed in #build-status", r["message"])
+        self.assertIn("**BLOCKED**", self.log_text())
+        self.assertTrue(self.alerts[-1].startswith("⛔"))
+
+    def test_capture_channel_reads_but_cant_write(self):
+        self.use_real_policy()
+        self.at("focus-sessions")
+        self.assertIsNone(self.g.pre_tool_call(tool_name="search_files",
+                                               args={"pattern": "focus-log", "path": "/workspace/vault"}))
+        for tool in ("write_file", "terminal", "delegate_task"):
+            self.assertEqual(self.g.pre_tool_call(tool_name=tool, args={})["action"], "block", tool)
+
+    def test_toolset_names_allow_their_tools(self):
+        self.use_real_policy()
+        self.at("code-assist")
+        self.assertIsNone(self.g.pre_tool_call(tool_name="terminal", args={"command": "pytest"}))
+        self.at("general-chat")
+        self.assertIsNone(self.g.pre_tool_call(tool_name="web_search", args={"query": "x"}))
+        self.assertEqual(self.g.pre_tool_call(tool_name="terminal", args={})["action"], "block")
+
+    def test_unknown_channel_is_read_only(self):
+        self.use_real_policy()
+        self.at("brand-new-channel")
+        self.assertIsNone(self.g.pre_tool_call(tool_name="read_file", args={"path": "/workspace/vault/a.md"}))
+        self.assertEqual(self.g.pre_tool_call(tool_name="write_file", args={})["action"], "block")
+
+    def test_dm_and_cron_unlimited_but_denylist_applies(self):
+        self.use_real_policy()
+        self.env = {"HERMES_SESSION_PLATFORM": "discord", "HERMES_SESSION_CHAT_TYPE": "dm"}
+        self.assertIsNone(self.g.pre_tool_call(tool_name="terminal", args={}))
+        self.env = {"HERMES_CRON_SESSION": "1"}
+        self.assertIsNone(self.g.pre_tool_call(tool_name="terminal", args={"command": "git log"}))
+        self.assertEqual(self.g.pre_tool_call(tool_name="discord_admin", args={})["action"], "block")
+
+    def test_report_tool_always_allowed(self):
+        self.use_real_policy()
+        self.at("announcements")
+        self.assertIsNone(self.g.pre_tool_call(tool_name="report_security_event", args={"summary": "x"}))
+
+    def test_prompt_lines(self):
+        self.use_real_policy()
+        self.assertIn("no tools are available", self.g.policy.prompt_line("#announcements"))
+        self.assertIn("read_file, search_files", self.g.policy.prompt_line("#brain-dump"))
+        self.assertEqual(self.g.policy.prompt_line("dm"), "")
 
     def test_log_stays_in_07_security(self):
         with self.assertRaises(ValueError):

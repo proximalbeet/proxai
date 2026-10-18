@@ -10,6 +10,7 @@ and only this host-side code writes to it. Every day gets one log file,
   BREACH   a tool call that touched a protected path (blocked)
   SANDBOX  a tool call the sandbox refused (read-only file system, permission denied)
   REPORT   something a model flagged with the report_security_event tool
+  BLOCKED  a tool the channel isn't allowed to use (routing.json ``tool_policy``)
 
 BREACH and SANDBOX lines are also posted to #bot-audit-log with 🚨.
 """
@@ -111,6 +112,65 @@ def summarize_args(args: Any, limit: int = 160) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _toolset_of(tool_name: str) -> str:
+    try:
+        from model_tools import get_toolset_for_tool
+        return get_toolset_for_tool(tool_name) or ""
+    except Exception:
+        return ""
+
+
+class ToolPolicy:
+    """Per-channel tool allow-lists from routing.json ``tool_policy``.
+
+    Entries are tool names (``read_file``) or toolset names (``web``). Channels not listed use
+    ``default_profile``. DMs, cron jobs and non-Discord sessions get no channel limits;
+    ``deny_everywhere`` applies to all of them.
+    """
+
+    def __init__(self, cfg: Optional[dict] = None):
+        cfg = cfg or {}
+        self.enabled = bool(cfg)
+        self.profiles: dict[str, list[str]] = cfg.get("profiles", {})
+        self.channels: dict[str, Any] = cfg.get("channels", {})
+        self.default_profile = cfg.get("default_profile", "")
+        self.always = set(cfg.get("always_allow", []))
+        self.deny = set(cfg.get("deny_everywhere", []))
+
+    def allowed_for(self, channel: str) -> Optional[list[str]]:
+        """Allow-list for '#channel', or None when the channel has no limits."""
+        if not self.enabled or not channel.startswith("#"):
+            return None
+        entry = self.channels.get(channel[1:], self.default_profile)
+        if isinstance(entry, list):
+            return entry
+        if entry in self.profiles:
+            return self.profiles[entry]
+        return None
+
+    def check(self, tool_name: str, channel: str) -> Optional[str]:
+        """Reason the call is blocked, or None if it's allowed."""
+        toolset = _toolset_of(tool_name)
+        if tool_name in self.deny or (toolset and toolset in self.deny):
+            return f"{tool_name} is turned off for ProxAI everywhere"
+        if tool_name in self.always:
+            return None
+        allowed = self.allowed_for(channel)
+        if allowed is None or tool_name in allowed or (toolset and toolset in allowed):
+            return None
+        return f"{tool_name} isn't allowed in {channel}"
+
+    def prompt_line(self, channel: str) -> str:
+        allowed = self.allowed_for(channel)
+        if allowed is None:
+            return ""
+        if not allowed:
+            return ("TOOLS: no tools are available in this channel (enforced by the system). "
+                    "Answer in text only.")
+        return ("TOOLS: only these tools work in this channel (enforced by the system; others are "
+                f"blocked): {', '.join(allowed)}.")
+
+
 class Guard:
     """Shared state between the gateway hook (sees channels) and the tool hooks (see calls)."""
 
@@ -120,8 +180,10 @@ class Guard:
         self.client = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.alert_channel = "bot-audit-log"
+        self.policy = ToolPolicy()
 
     def configure(self, config: dict) -> None:
+        self.policy = ToolPolicy(config.get("tool_policy"))
         sec = config.get("security") or {}
         if sec.get("vault_path"):
             vault = Path(sec["vault_path"]).expanduser()
@@ -212,6 +274,13 @@ class Guard:
             return {"action": "block",
                     "message": f"Blocked: {tool_name} tried to touch {hit}, which ProxAI may not access. "
                                "This was logged. Don't retry; tell Nathan what you were trying to do."}
+        reason = self.policy.check(tool_name, channel)
+        if reason:
+            self.record("BLOCKED", channel, f"{reason} · {summarize_args(args)}")
+            self.alert(f"⛔ **BLOCKED** · {channel or '-'} · {reason}")
+            return {"action": "block",
+                    "message": f"Blocked by channel tool limits: {reason}. Don't retry it; answer without "
+                               "it, or tell Nathan which channel can do this."}
         self.record("TOOL", channel, f"{tool_name} {summarize_args(args)}")
         return None
 
