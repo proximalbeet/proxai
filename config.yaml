@@ -326,6 +326,9 @@ stt:
   local:
     model: base
     language: ''
+    # CPU keeps Whisper off the GPU (qwen + the kanye voice already fill it); base takes <1 s per clip
+    device: cpu
+    compute_type: int8
   openai:
     model: whisper-1
   mistral:
