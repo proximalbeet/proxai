@@ -1,0 +1,23 @@
+[Unit]
+Description=ProxAI vault sync (commit, pull --rebase, push; stops cleanly on conflicts)
+Documentation=file://%h/.hermes/profiles/proxai/vault-sync/README.md
+# File _inbox notes first, then sync (both also take ~/.local/state/proxai/vault.lock)
+Wants=proxai-refiler.service
+After=proxai-refiler.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.hermes/profiles/proxai/vault-sync/vault_sync.py
+Environment=PROXAI_VAULT=%h/Documents/ProxVault
+Environment=PROXAI_VAULT_SSH_KEY=%h/.ssh/proxvault_deploy
+TimeoutStartSec=10min
+
+# Sandbox: sees only the vault, its log folder, its own code and the deploy key.
+# Not ~/.git-credentials, ~/.gitconfig or the rest of ~/.ssh. Needs the network for GitHub.
+ProtectHome=tmpfs
+BindPaths=%h/Documents/ProxVault %h/.local/state/proxai
+BindReadOnlyPaths=%h/.hermes/profiles/proxai/vault-sync %h/.ssh/proxvault_deploy
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

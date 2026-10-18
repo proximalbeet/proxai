@@ -1,0 +1,8 @@
+name: vault-sync
+version: "1.0.0"
+description: "Phase 8: vault_sync tool and /vault-sync command report the host-side ProxVault git sync (proxai-vault-sync timer) and can start a run; posts to #bot-audit-log once when a sync is stuck and once when it recovers. Hermes never runs git itself."
+author: "prox"
+provides_tools:
+  - vault_sync
+provides_hooks:
+  - pre_gateway_dispatch

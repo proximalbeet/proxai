@@ -1,0 +1,16 @@
+# ProxVault .gitignore (installed by `vault_sync.py prepare`; same file on every device)
+# Per-device Obsidian state: window layout and recent files change on every click
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+# The laptop syncs with the Obsidian Git plugin. Keep it off the desktop, where the
+# vault-sync timer does the syncing (two syncers on one repo would race each other).
+.obsidian/plugins/obsidian-git/
+# ProxAI's write-only security log stays on the desktop (decision: Nathan)
+07-Security/ProxAI-Audit/
+# Editor and OS junk
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.~lock.*
