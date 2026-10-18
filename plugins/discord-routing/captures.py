@@ -32,6 +32,8 @@ ALLOWED_FOLDERS = ("05-Brain-Dump", "_inbox")
 STATE_DIR = Path(os.environ.get("PROXAI_STATE_DIR", Path.home() / ".local/state/proxai"))
 
 _MENTION_RE = re.compile(r"<@!?\d+>")
+_CHANNEL_RE = re.compile(r"<#(\d+)>")
+_SENTENCE_RE = re.compile(r"(?<=[.!])\s+")
 _LIST_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+(?:\[[ xX]\]\s*)?")
 _START_RE = re.compile(r"^(?:start(?:ing)?|begin)\b[\s:,-]*(.*)$", re.I | re.S)
 _END_RE = re.compile(r"^(?:end(?:ed)?|stop(?:ped)?|done|finish(?:ed)?)\b[\s:,.!-]*(.*)$", re.I | re.S)
@@ -48,6 +50,17 @@ class Capture:
 
 def clean_text(text: str) -> str:
     return _MENTION_RE.sub("", text or "").strip()
+
+
+def resolve_channel_mentions(text: str, lookup) -> str:
+    """Turn Discord's ``<#123>`` into ``#channel-name`` (``lookup(id)`` → name or None)."""
+    def name(m):
+        try:
+            found = lookup(int(m.group(1)))
+        except Exception:
+            found = None
+        return f"#{found}" if found else "#channel"
+    return _CHANNEL_RE.sub(name, text or "")
 
 
 def slugify(text: str, limit: int = 40) -> str:
@@ -105,7 +118,8 @@ class CaptureWriter:
                 return path
         return None
 
-    def brain_dump(self, text: str, message_id: str, thread_id: str, now: dt.datetime) -> Capture:
+    def brain_dump(self, text: str, message_id: str, thread_id: str, now: dt.datetime,
+                   voice: bool = False) -> Capture:
         text = clean_text(text)
         if not text:
             return Capture(False)
@@ -116,7 +130,8 @@ class CaptureWriter:
                     return Capture(False, summary="question in a brain-dump thread, not saved")
                 old = note.read_text(encoding="utf-8")
                 new = re.sub(r"^updated: .*$", f"updated: {now:%Y-%m-%d}", old, count=1, flags=re.M)
-                new = new.rstrip("\n") + f"\n\n**Follow-up {now:%H:%M}:** {text}\n"
+                label = "Follow-up (voice)" if voice else "Follow-up"
+                new = new.rstrip("\n") + f"\n\n**{label} {now:%H:%M}:** {text}\n"
                 note.write_text(new, encoding="utf-8")
                 rel = f"05-Brain-Dump/{note.name}"
                 return Capture(True, rel, f"added this follow-up to {rel}")
@@ -131,10 +146,10 @@ class CaptureWriter:
             f"created: {now:%Y-%m-%d}\n"
             f"updated: {now:%Y-%m-%d}\n"
             "source: discord #brain-dump\n"
-            f"discord_message: {_yaml_str(anchor)}\n"
-            "tags: [brain-dump]\n"
-            "---\n\n"
-            f"{text}\n"
+            + ("input: voice\n" if voice else "")
+            + f"discord_message: {_yaml_str(anchor)}\n"
+            + ("tags: [brain-dump, voice]\n" if voice else "tags: [brain-dump]\n")
+            + f"---\n\n{text}\n"
         )
         rel = self._write_new("05-Brain-Dump", f"{now:%Y-%m-%d-%H%M}-{slugify(title, 30)}.md", body)
         return Capture(True, rel, f"saved this brain dump as {rel}")
@@ -151,10 +166,13 @@ class CaptureWriter:
                 goals.append(item)
         return goals
 
-    def daily_goals(self, text: str, now: dt.datetime) -> Capture:
+    def daily_goals(self, text: str, now: dt.datetime, voice: bool = False) -> Capture:
         text = clean_text(text)
         if not text or text.endswith("?"):
             return Capture(False, summary="a question, not goals, so nothing was saved")
+        if voice and len(text.splitlines()) == 1:
+            # A transcript is one paragraph: one goal per spoken sentence.
+            text = "\n".join(s.strip().rstrip(".!") for s in _SENTENCE_RE.split(text) if s.strip())
         goals = self.parse_goals(text)
         if not goals:
             return Capture(False)
@@ -168,7 +186,8 @@ class CaptureWriter:
             f"title: {_yaml_str('Daily goals ' + day)}\n"
             f"created: {day}\n"
             "source: discord #daily-goals\n"
-            "---\n\n"
+            + ("input: voice\n" if voice else "")
+            + "---\n\n"
             + "".join(f"- [ ] {g}\n" for g in goals)
         )
         rel = self._write_new("_inbox", f"{day}-daily-goals-{now:%H%M%S}.md", body)

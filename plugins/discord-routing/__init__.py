@@ -161,7 +161,30 @@ def _allowed_capture_user(source, adapter) -> bool:
     return "*" not in allowed and str(source.user_id or "") in allowed
 
 
-async def _run_capture(event, source, adapter, channel_name: str, config: dict) -> str:
+async def _voice_transcript(event, source, adapter, gateway) -> str:
+    """Transcribe a voice note now, through the gateway's own once-per-message STT.
+
+    The gateway caches the result on the event, so the normal reply path reuses this transcript
+    instead of running Whisper a second time. Returns "" if there's nothing usable."""
+    transcribe = getattr(gateway, "_transcribe_and_echo_pending_voice", None)
+    if transcribe is None:
+        return ""
+    try:
+        _, transcripts = await transcribe(event, adapter, source, event.text or "", log_context="Capture")
+    except Exception as exc:
+        logger.warning("[discord-routing] Voice transcription for capture failed: %s", exc)
+        return ""
+    return "\n\n".join(t.strip() for t in transcripts or [] if t and t.strip())
+
+
+def _channel_lookup(client):
+    def lookup(channel_id: int):
+        channel = client.get_channel(channel_id) if client is not None else None
+        return getattr(channel, "name", None)
+    return lookup
+
+
+async def _run_capture(event, source, adapter, channel_name: str, config: dict, gateway=None) -> str:
     """Save the capture for this message, if any. Returns an extra line for the channel prompt."""
     captures_cfg = config.get("captures") or {}
     kind = (captures_cfg.get("channels") or {}).get(channel_name)
@@ -170,13 +193,18 @@ async def _run_capture(event, source, adapter, channel_name: str, config: dict) 
     text = event.text or ""
     if text.strip().startswith(("!", "/")):
         return ""
+    voice = False
     msg_type = getattr(event.message_type, "value", event.message_type)
     if msg_type in ("voice", "audio") and not captures.clean_text(text):
-        notice = "🎙️ Voice notes aren't saved here yet. Type it and I'll save it."
-        if adapter is not None:
-            await adapter.send(source.chat_id, notice)
-        return ("CAPTURE: this was a voice note and the plugin did not save it (voice capture isn't "
-                "supported yet). Don't write any files; just reply to what was said.")
+        transcript = await _voice_transcript(event, source, adapter, gateway)
+        if not transcript:
+            notice = "🎙️ I couldn't transcribe that voice note, so it wasn't saved. Type it and I'll save it."
+            if adapter is not None:
+                await adapter.send(source.chat_id, notice)
+            return ("CAPTURE: this was a voice note the plugin couldn't transcribe, so nothing was saved. "
+                    "Don't write any files; just reply.")
+        text, voice = transcript, True
+    text = captures.resolve_channel_mentions(text, _channel_lookup(getattr(adapter, "_client", None)))
 
     writer = captures.CaptureWriter(Path(captures_cfg.get("vault_path", "~/Documents/ProxVault")))
     now = event.timestamp if isinstance(event.timestamp, datetime) else datetime.now()
@@ -184,9 +212,9 @@ async def _run_capture(event, source, adapter, channel_name: str, config: dict) 
     thread_id = source.thread_id or (source.chat_id if source.chat_type == "thread" else "")
     try:
         if kind == "brain_dump":
-            result = writer.brain_dump(text, str(event.message_id or ""), str(thread_id or ""), now)
+            result = writer.brain_dump(text, str(event.message_id or ""), str(thread_id or ""), now, voice=voice)
         elif kind == "daily_goals":
-            result = writer.daily_goals(text, now)
+            result = writer.daily_goals(text, now, voice=voice)
         elif kind == "focus_session":
             result = writer.focus_session(text, now)
         else:
@@ -283,7 +311,7 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
 
     # Capture channels: the plugin saves the note, the model only replies.
     if not escalated:
-        capture_prompt = await _run_capture(event, source, adapter, channel_name, config)
+        capture_prompt = await _run_capture(event, source, adapter, channel_name, config, gateway)
         if capture_prompt:
             event.channel_prompt = (
                 f"{event.channel_prompt}\n\n{capture_prompt}" if event.channel_prompt else capture_prompt

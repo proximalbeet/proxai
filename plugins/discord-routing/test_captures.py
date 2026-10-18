@@ -157,8 +157,12 @@ class Hook(Base):
         self.plugin._config_mtime = 0.0
         os.environ.pop("DISCORD_ALLOWED_USERS", None)  # the adapter's list is what counts
 
-    def dispatch(self, channel, text, user="42", chat_type="group", msg_type="text", thread_id=None):
+    def dispatch(self, channel, text, user="42", chat_type="group", msg_type="text", thread_id=None,
+                 transcript=None, channels=None):
         adapter = FakeAdapter()
+        if channels:
+            adapter._client = types.SimpleNamespace(
+                get_channel=lambda cid: types.SimpleNamespace(name=channels[cid]) if cid in channels else None)
         self.plugin.guard.chat_channels.clear()  # each call is a different channel with the same fake ID
         source = types.SimpleNamespace(
             platform="discord", chat_type=chat_type, chat_id="900", parent_chat_id=None,
@@ -170,8 +174,55 @@ class Hook(Base):
         gateway = types.SimpleNamespace(
             adapters={"discord": adapter}, _session_model_overrides={},
             _session_key_for_source=lambda s: "k")
+        self.stt_calls = 0
+        if transcript is not None:
+            async def transcribe(ev, _adapter, _source, text, **_kw):
+                self.stt_calls += 1
+                return (f'[voice] "{transcript}"', [transcript] if transcript else [])
+            gateway._transcribe_and_echo_pending_voice = transcribe
         result = asyncio.run(self.plugin._on_pre_gateway_dispatch(event=event, gateway=gateway))
         return event, adapter, result
+
+    def test_voice_brain_dump_saved_from_transcript(self):
+        event, adapter, _ = self.dispatch("brain-dump", "", msg_type="voice",
+                                          transcript="Robot arm that sorts Lego by colour.")
+        notes = list((self.vault / "05-Brain-Dump").iterdir())
+        self.assertEqual(len(notes), 1)
+        text = notes[0].read_text()
+        self.assertIn("input: voice", text)
+        self.assertIn("Robot arm that sorts Lego by colour.", text)
+        self.assertIn("robot-arm", notes[0].name)
+        self.assertEqual(self.stt_calls, 1)
+        self.assertIn("CAPTURE DONE BY THE SYSTEM", event.channel_prompt)
+        self.assertEqual(adapter.sent, [])
+
+    def test_voice_goals_one_per_sentence(self):
+        self.dispatch("daily-goals", "", msg_type="voice",
+                      transcript="Finish the slides. Call the dentist! Go for a run.")
+        note = next((self.vault / "_inbox").glob("*daily-goals*.md")).read_text()
+        self.assertIn("- [ ] Finish the slides\n- [ ] Call the dentist\n- [ ] Go for a run\n", note)
+        self.assertIn("input: voice", note)
+
+    def test_voice_focus_start(self):
+        event, _, _ = self.dispatch("focus-sessions", "", msg_type="voice", transcript="Start wiring the arm.")
+        self.assertIn("started a focus session at 09:05 on: wiring the arm", event.channel_prompt)
+
+    def test_voice_not_transcribed_not_saved(self):
+        event, adapter, _ = self.dispatch("brain-dump", "", msg_type="voice", transcript="")
+        self.assertEqual(list((self.vault / "05-Brain-Dump").iterdir()), [])
+        self.assertIn("couldn't transcribe", adapter.sent[0][1])
+
+    def test_channel_mention_resolved_in_title(self):
+        self.dispatch("brain-dump", "save a note in <#1500997711506182244> about gears",
+                      channels={1500997711506182244: "brain-dump"})
+        note = next((self.vault / "05-Brain-Dump").iterdir())
+        self.assertIn("save-a-note-in-brain-dump", note.name)
+        self.assertIn('title: "save a note in #brain-dump about gears"', note.read_text())
+
+    def test_unknown_channel_mention(self):
+        self.dispatch("brain-dump", "see <#123> later")
+        note = next((self.vault / "05-Brain-Dump").iterdir())
+        self.assertIn('title: "see #channel later"', note.read_text())
 
     def test_brain_dump_saved_and_model_told(self):
         event, _, result = self.dispatch("brain-dump", "robot arm idea")
@@ -237,10 +288,10 @@ class Hook(Base):
         self.dispatch("brain-dump", "spam", user="99")
         self.assertEqual(list((self.vault / "05-Brain-Dump").iterdir()), [])
 
-    def test_voice_note_not_saved(self):
+    def test_voice_note_without_gateway_stt_not_saved(self):
         event, adapter, _ = self.dispatch("brain-dump", "", msg_type="voice")
         self.assertEqual(list((self.vault / "05-Brain-Dump").iterdir()), [])
-        self.assertIn("Voice notes", adapter.sent[0][1])
+        self.assertIn("couldn't transcribe", adapter.sent[0][1])
 
     def test_non_capture_channel_untouched(self):
         event, _, _ = self.dispatch("general-chat", "hello")
