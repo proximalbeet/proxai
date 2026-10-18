@@ -3,10 +3,12 @@
 Python stdlib only (urllib). Shared by the Hermes plugin (__init__.py) and setup_calendar.py.
 
 Permission model
-* OAuth scopes: ``calendar.app.created`` (calendars this app created + their events) and,
-  optionally, ``calendar.freebusy`` (busy/free times only, no event details). A token with any
+* OAuth scopes: ``calendar.app.created`` (calendars this app created + their events: the only
+  place it can write), optionally ``calendar.events.readonly`` (read Nathan's own events, never
+  change them; Nathan 10-18) and ``calendar.freebusy`` (busy/free times only). A token with any
   other scope is refused, so a broader token can't be swapped in.
-* The calendar id comes from ``calendar.json`` written at setup, never from the model.
+* The calendar id for writes comes from ``calendar.json`` written at setup, never from the model.
+  Reads of Nathan's events go to his ``primary`` calendar only.
 * Events never get attendees, and every write uses ``sendUpdates=none``: no invites or emails.
 
 Files (``~/.hermes/profiles/proxai/google-calendar/``, folder 700, files 600, not in git):
@@ -34,7 +36,8 @@ LOG_PATH = Path(os.environ.get("PROXAI_CALENDAR_LOG", Path.home() / ".local/stat
 
 SCOPE_APP = "https://www.googleapis.com/auth/calendar.app.created"
 SCOPE_FREEBUSY = "https://www.googleapis.com/auth/calendar.freebusy"
-ALLOWED_SCOPES = {SCOPE_APP, SCOPE_FREEBUSY}
+SCOPE_READ_EVENTS = "https://www.googleapis.com/auth/calendar.events.readonly"
+ALLOWED_SCOPES = {SCOPE_APP, SCOPE_FREEBUSY, SCOPE_READ_EVENTS}
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://www.googleapis.com/calendar/v3"
 
@@ -164,8 +167,14 @@ class Calendar:
 
     # -- auth
     def _token(self) -> str:
-        if self._access and time.time() < self._expires - 60:
+        # A new sign-in (setup run again) replaces token.json: pick it up without a restart.
+        try:
+            mtime = (self.dir / "token.json").stat().st_mtime
+        except OSError:
+            mtime = None
+        if self._access and time.time() < self._expires - 60 and mtime == getattr(self, "_token_mtime", None):
             return self._access
+        self._token_mtime = mtime
         tok = _private_json(self.dir / "token.json")
         self.scopes = check_scopes(tok.get("scope", ""))
         secret = _private_json(self.dir / "client_secret.json")
@@ -236,6 +245,41 @@ class Calendar:
         if cal.get("errors"):
             raise CalendarError(f"busy lookup refused: {cal['errors'][0].get('reason')}")
         return cal.get("busy", [])
+
+    def my_events(self, start: str | None = None, end: str | None = None) -> list[dict]:
+        """Nathan's own events on his primary calendar, read-only. Only title, time and place:
+        descriptions and attendee lists are left out (invites are text anyone can send)."""
+        self._token()
+        if SCOPE_READ_EVENTS not in getattr(self, "scopes", set()):
+            raise CalendarError("reading Nathan's own events wasn't allowed at setup "
+                                "(calendar.events.readonly not granted); only busy times are visible")
+        t0, t1 = range_bounds(start, end)
+        resp = self.api("GET", "/calendars/primary/events",
+                        {"timeMin": t0, "timeMax": t1, "singleEvents": "true",
+                         "orderBy": "startTime", "maxResults": "100"})
+        out = []
+        for e in resp.get("items", []):
+            s, en = e.get("start", {}), e.get("end", {})
+            out.append({"calendar": "Nathan's", "title": (e.get("summary") or "(no title)")[:200],
+                        "start": s.get("dateTime") or s.get("date"),
+                        "end": en.get("dateTime") or en.get("date"),
+                        "location": (e.get("location") or "")[:200]})
+        return out
+
+    def agenda(self, start: str | None = None, end: str | None = None) -> list[dict]:
+        """Nathan's events + ProxAI's, sorted by start. Only ProxAI ones carry an event_id."""
+        mine = self.my_events(start, end)
+        ours = [{"calendar": "ProxAI", "event_id": e["event_id"], "title": e["title"],
+                 "start": e["start"], "end": e["end"]} for e in self.list_events(start, end)]
+        tz = self.config().get("time_zone", "UTC")
+
+        def key(ev):
+            v = ev.get("start") or ""
+            try:
+                return _as_dt({"date": v} if len(v) == 10 else {"dateTime": v}, tz)
+            except (ValueError, TypeError):
+                return datetime.max.replace(tzinfo=ZoneInfo("UTC"))
+        return sorted(mine + ours, key=key)
 
     # -- writes (ProxAI calendar only, never invites)
     def create(self, title: str, start: str, end: str | None = None, description: str = "") -> dict:

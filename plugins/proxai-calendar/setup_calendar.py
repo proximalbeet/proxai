@@ -5,6 +5,9 @@
       copies the OAuth client in, signs in through the browser (scopes: calendar.app.created
       + calendar.freebusy), saves token.json (600) and creates the "ProxAI" calendar
   python3 setup_calendar.py --no-freebusy ...   leave out busy times
+  python3 setup_calendar.py --no-read-events    don't let Hermes read your own events
+  python3 setup_calendar.py                     sign in again (e.g. after adding a scope or
+                                                Google's 7-day Testing-mode expiry); keeps the calendar
   python3 setup_calendar.py --selftest
       create → move → delete a test event on ProxAI, then check that writing to and reading
       the main calendar are refused (the permission test)
@@ -27,7 +30,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from core import (CONFIG_DIR, SCOPE_APP, SCOPE_FREEBUSY, TOKEN_URL, Calendar,  # noqa: E402
+from core import (CONFIG_DIR, SCOPE_APP, SCOPE_FREEBUSY, SCOPE_READ_EVENTS, TOKEN_URL, Calendar,  # noqa: E402
                   CalendarError, check_scopes, urllib_http, write_private_json)
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -107,7 +110,8 @@ def setup(args) -> None:
     if not dest.exists():
         raise SystemExit("Pass --client-secret <downloaded json> the first time.")
     client = json.loads(dest.read_text())["installed"]
-    scopes = [SCOPE_APP] + ([] if args.no_freebusy else [SCOPE_FREEBUSY])
+    scopes = ([SCOPE_APP] + ([] if args.no_freebusy else [SCOPE_FREEBUSY])
+              + ([] if args.no_read_events else [SCOPE_READ_EVENTS]))
     token = sign_in(client, scopes)
     write_private_json(CONFIG_DIR / "token.json", token)
     print(f"signed in; scopes granted: {token['scope']}")
@@ -150,11 +154,24 @@ def selftest() -> int:
         check("write to main calendar refused", False, "it was allowed! delete 'SHOULD FAIL' and re-check scopes")
     except CalendarError as e:
         check("write to main calendar refused", "permission" in str(e) or "not found" in str(e), str(e))
-    try:
-        cal.api("GET", "/calendars/primary/events", {"maxResults": "1"})
-        check("read main calendar refused", False, "events were readable")
-    except CalendarError as e:
-        check("read main calendar refused", True, str(e))
+    cal._token()
+    if SCOPE_READ_EVENTS in cal.scopes:
+        try:
+            mine = cal.my_events(f"{day}T00:00", f"{day}T23:59")
+            check("read your own events (read-only)", True, f"{len(mine)} event(s) tomorrow, titles only")
+        except CalendarError as e:
+            check("read your own events (read-only)", False, str(e))
+        try:
+            cal.api("DELETE", "/calendars/primary/events/doesnotexist0", {"sendUpdates": "none"})
+            check("change main calendar refused", False, "a delete was accepted")
+        except CalendarError as e:
+            check("change main calendar refused", "permission" in str(e) or "not found" in str(e), str(e))
+    else:
+        try:
+            cal.api("GET", "/calendars/primary/events", {"maxResults": "1"})
+            check("read main calendar refused", False, "events were readable")
+        except CalendarError as e:
+            check("read main calendar refused", True, str(e))
     try:
         busy = cal.busy()
         check("busy times (no details)", all(set(b) <= {"start", "end"} for b in busy), f"{len(busy)} busy block(s)")
@@ -167,6 +184,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--client-secret", help="OAuth desktop client JSON downloaded from Google Cloud Console")
     p.add_argument("--no-freebusy", action="store_true", help="don't ask for busy times")
+    p.add_argument("--no-read-events", action="store_true", help="don't let Hermes read your own events")
     p.add_argument("--name", default="ProxAI", help="calendar name (default ProxAI)")
     p.add_argument("--selftest", action="store_true", help="run the permission test")
     a = p.parse_args()

@@ -7,7 +7,9 @@ calendar lives in your Google account, so it shows up under "My calendars" next 
 
 | | |
 |---|---|
-| Google scopes | `calendar.app.created` (calendars this app created + their events) and `calendar.freebusy` (when you're busy, no titles or details). Nothing else: no Gmail, Drive, Docs, or your other calendars |
+| Google scopes | `calendar.app.created` (calendars this app created + their events: the **only place it can write**), `calendar.events.readonly` (**read** your own events; added 10-18 by Nathan, `--no-read-events` leaves it out) and `calendar.freebusy` (busy times). No Gmail, Drive or Docs |
+| Your events | Read-only, `primary` calendar only, and only title, time and place: descriptions and attendee lists are left out, and the tool marks titles as untrusted text (anyone can send you an invite). They carry no event_id, so update/delete can't target them. Recommended: Google Calendar → Settings → Event settings → "Add invitations to my calendar" → **Only if the sender is known** |
+| Being found | Plugin tools sit behind Hermes's Tool Search, so a `pre_llm_call` hook adds a one-line pointer to the `calendar` tool when a message is about the calendar |
 | Broader token | Refused. A token with any other scope stops the tool ("more access than ProxAI is allowed") |
 | Which calendar | Fixed by `calendar.json` at setup. The model has no calendar field to change |
 | Invites | Never: no attendees, every write sends `sendUpdates=none` |
@@ -20,8 +22,15 @@ calendar lives in your Google account, so it shows up under "My calendars" next 
 Caveat: all Hermes profiles run as the same Linux user, so another profile's gateway *could* read
 the file. Separating them needs the gateway sandboxing from Phase 6 ("desktop access, no browsing").
 
-**Tool:** `calendar` with `list` / `busy` / `create` / `update` / `delete`.
+**Tool:** `calendar` with `agenda` (your events + ProxAI's) / `list` (ProxAI only) / `busy` /
+`create` / `update` / `delete`.
 **Commands:** `/calendar` (next 7 days), `/calendar-confirm <code>`.
+
+**Adding the read scope to an existing setup:** Google Cloud → Data access → add
+`.../auth/calendar.events.readonly` → Save; then run `setup_calendar.py` again (no arguments; it
+keeps the client and the ProxAI calendar) and `--selftest`. No gateway restart needed: the plugin
+picks up the new login by itself. Run the new code (merge) **before** signing in again: the older
+plugin refuses a login with the extra scope. In Testing mode, the same command is the weekly re-login.
 
 ## Go live (Nathan)
 
