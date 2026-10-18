@@ -43,11 +43,11 @@ the file. Separating them needs the gateway sandboxing from Phase 6 ("desktop ac
    Add `--no-freebusy` if Hermes shouldn't see when you're busy
 4. Permission test: `python3 ~/.hermes/profiles/proxai/plugins/proxai-calendar/setup_calendar.py --selftest`
    → create / move / list / delete PASS, **write to main calendar refused**, **read main calendar refused**
-5. Hermes: `hermes -p proxai plugins enable proxai-calendar`, add `proxai_calendar` to
-   `platform_toolsets` → `discord` and `cli` in `config.yaml`, then
-   `systemctl --user restart hermes-gateway-proxai`. (Channel limits and the `google-workspace`
-   disable are already in this branch, see below.) Left out of the branch on purpose so Hermes
-   doesn't see a calendar tool before step 3 is done
+5. `systemctl --user restart hermes-gateway-proxai`. The branch already enables the plugin,
+   adds `proxai_calendar` to `platform_toolsets` (discord, cli), sets the channel limits and
+   disables `google-workspace`. Steps 3–4 can run from the branch folder before the merge
+   (`~/.hermes/profiles/proxai/.claude/worktrees/calendar/plugins/proxai-calendar/`); the login is
+   saved in the profile either way. Merged before setup, the tool just answers "not set up yet"
 6. From Discord: "put a 30-minute study block on my calendar tomorrow at 3" → event in the ProxAI
    calendar, 📅 line in #bot-audit-log; "move it to 4" → moved; "delete it" → a code, nothing
    deleted until `/calendar-confirm <code>`

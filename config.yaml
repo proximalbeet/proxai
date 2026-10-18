@@ -533,6 +533,7 @@ platform_toolsets:
     - homeassistant
     - image_gen
     - memory
+    - proxai_calendar
     - session_search
     - skills
     - terminal
@@ -556,6 +557,7 @@ platform_toolsets:
     - homeassistant
     - image_gen
     - memory
+    - proxai_calendar
     - session_search
     - skills
     - terminal
@@ -659,6 +661,7 @@ plugins:
     - claude-code-delegation
     - hermes-session-reset-policy
     - homeassistant
+    - proxai-calendar
   disabled: []
 _left_core_installed:
   - homeassistant
