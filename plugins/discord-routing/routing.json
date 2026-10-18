@@ -82,5 +82,10 @@
       "daily-goals": "daily_goals",
       "focus-sessions": "focus_session"
     }
+  },
+  "security": {
+    "vault_path": "~/Documents/ProxVault",
+    "log_folder": "07-Security/ProxAI-Audit",
+    "alert_channel": "bot-audit-log"
   }
 }

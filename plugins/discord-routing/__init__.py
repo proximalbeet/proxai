@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import captures
+from .guard import REPORT_SCHEMA, guard
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,8 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     client = getattr(adapter, "_client", None)
     channel_name = _channel_name(source, client)
     text = (event.text or "").strip()
+    guard.configure(config)
+    guard.remember(source.chat_id, channel_name, client)
 
     if text.lower() == "!model":
         routing = _routing_for(channel_name, config)
@@ -238,6 +241,9 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
         "[discord-routing] #%s → model: %s%s",
         channel_name, routing["label"], " (opus escalation)" if escalated else "",
     )
+    guard.record("ROUTE", f"#{channel_name}",
+                 f"{source.user_name or 'unknown'} ({source.user_id}) → {routing['label']}"
+                 + (" [!opus]" if escalated else ""))
 
     # A prompt in routing.json replaces any ID-keyed discord.channel_prompts entry.
     channel_prompt = config.get("prompts", {}).get(channel_name)
@@ -274,3 +280,12 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
 
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
+    # Tool guard: protected paths blocked, every call logged to the write-only security log.
+    guard.configure(_load_config())
+    ctx.register_hook("pre_tool_call", guard.pre_tool_call)
+    ctx.register_hook("post_tool_call", guard.post_tool_call)
+    ctx.register_tool(
+        name="report_security_event", toolset="proxai_security", schema=REPORT_SCHEMA,
+        handler=guard.report_tool, emoji="🚨",
+        description="Log a security concern to the write-only 07-Security log",
+    )

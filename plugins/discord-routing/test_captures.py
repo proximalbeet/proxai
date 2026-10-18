@@ -148,6 +148,8 @@ class Hook(Base):
         super().setUp()
         cfg = json.loads((HERE / "routing.json").read_text())
         cfg["captures"]["vault_path"] = str(self.vault)
+        cfg["security"]["vault_path"] = str(self.vault)  # never the real vault
+        self.plugin.guard.log = None
         self.cfg_path = Path(self.tmp.name) / "routing.json"
         self.cfg_path.write_text(json.dumps(cfg))
         self.plugin._CONFIG_PATH = self.cfg_path
@@ -177,6 +179,11 @@ class Hook(Base):
         self.assertIn("CAPTURE DONE BY THE SYSTEM", event.channel_prompt)
         self.assertIn(notes[0].name, event.channel_prompt)
         self.assertEqual(event.raw_message.reactions, ["📝"])
+
+    def test_route_logged_to_security_log(self):
+        self.dispatch("general-chat", "hello")
+        log = next((self.vault / "07-Security/ProxAI-Audit").glob("*.md")).read_text()
+        self.assertIn("**ROUTE** · #general-chat · nathan (42) → Claude Sonnet 5.5", log)
 
     def test_other_user_not_saved(self):
         self.dispatch("brain-dump", "spam", user="99")

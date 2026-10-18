@@ -57,7 +57,14 @@ terminal:
     - /home/prox/Documents/ProxVault:/workspace/vault:ro
     - /home/prox/Documents/ProxVault/10-Wiki:/workspace/vault/10-Wiki:rw
     - /home/prox/Documents/ProxVault/_inbox:/workspace/vault/_inbox:rw
-    - /home/prox/Documents/ProxVault/05-Brain-Dump:/workspace/vault/05-Brain-Dump:rw
+    # Hidden from the container: an empty folder is mounted over each one (Phase 6).
+    # 01-Personal = private; 07-Security = write-only (host-side plugin logs there);
+    # .git holds a copy of every file; .obsidian holds plugin settings and keys.
+    # 05-Brain-Dump is no longer rw here: the routing plugin saves brain dumps on the host.
+    - /home/prox/.local/share/proxai/empty:/workspace/vault/01-Personal:ro
+    - /home/prox/.local/share/proxai/empty:/workspace/vault/07-Security:ro
+    - /home/prox/.local/share/proxai/empty:/workspace/vault/.git:ro
+    - /home/prox/.local/share/proxai/empty:/workspace/vault/.obsidian:ro
   docker_mount_cwd_to_workspace: false
   docker_extra_args: []
   docker_run_as_host_user: true
@@ -620,8 +627,9 @@ _left_core_scoped:
   - homeassistant
 plugins:
   enabled:
-    - homeassistant
     - discord-routing
+    - hermes-session-reset-policy
+    - homeassistant
   disabled: []
 _left_core_installed:
   - homeassistant
