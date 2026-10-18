@@ -1,0 +1,8 @@
+name: claude-code-delegation
+version: "1.1.0"
+description: "Phase 7: the claude_code tool hands heavy work to Claude Code inside the Docker sandbox (~/dev/proxai/<project>, cc-run caps, egress allow-list). Logs every run host-side and to #bot-audit-log. Which channels may use it is set in discord-routing's tool_policy."
+author: "prox"
+provides_tools:
+  - claude_code
+provides_hooks:
+  - pre_gateway_dispatch
