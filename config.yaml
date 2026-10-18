@@ -336,10 +336,10 @@ delegation:
   api_key: ''
   api_mode: ''
   inherit_mcp_toolsets: true
-  max_iterations: 250
-  child_timeout_seconds: 600
+  max_iterations: 100
+  child_timeout_seconds: 300
   reasoning_effort: ''
-  max_concurrent_children: 10
+  max_concurrent_children: 3
   max_spawn_depth: 1
   orchestrator_enabled: true
   subagent_auto_approve: false
@@ -374,7 +374,7 @@ discord:
   auto_thread: true
   thread_require_mention: false
   history_backfill: true
-  history_backfill_limit: 50
+  history_backfill_limit: 20  # was 50; the discord-routing plugin drops it entirely in capture/log channels
   reactions: true
   channel_prompts: {}  # prompts live in plugins/discord-routing/routing.json (by channel name)
   dm_role_auth_guild: ''

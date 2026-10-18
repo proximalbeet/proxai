@@ -272,6 +272,10 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     if privacy:
         event.channel_prompt = f"{event.channel_prompt}\n\n{privacy}" if event.channel_prompt else privacy
 
+    # Cost: drop the backfilled channel history where each message stands alone.
+    if channel_name in (config.get("history_backfill") or {}).get("off", []) and getattr(event, "channel_context", None):
+        event.channel_context = None
+
     # Tell the model which tools this channel allows (the guard enforces it either way).
     tools_line = guard.policy.prompt_line(f"#{channel_name}")
     if tools_line:
