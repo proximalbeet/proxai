@@ -6,6 +6,7 @@
 !SOUL.gru.md
 !config.yaml
 !profile.yaml
+!README.md
 !skills/
 # Your own skills: add two lines per skill folder, e.g.
 #   !skills/quote-calculator/
