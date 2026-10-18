@@ -1,0 +1,16 @@
+# Sites the Hermes sandbox (and Claude Code inside it) may reach. Everything else is refused.
+# One domain per line; "*.example.com" matches subdomains. After editing:
+#   sandbox/egress/setup-egress.py && systemctl --user restart proxai-egress
+# Only add a site on purpose: anything listed here is a possible way for data to leave.
+
+# Claude Code (the real subscription token is only added on this host)
+api.anthropic.com
+
+# Packages: npm and Python
+registry.npmjs.org
+pypi.org
+files.pythonhosted.org
+
+# GitHub: read and clone (no login in the sandbox, so no pushing)
+github.com
+codeload.github.com

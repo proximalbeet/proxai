@@ -1,0 +1,78 @@
+#!/bin/bash
+# cc-run: the only way Hermes runs Claude Code. Lives in the proxai-sandbox image.
+#
+#   cc-run --project NAME [--max-turns N] [--timeout SECONDS] < task.txt
+#
+# The task is read from stdin, so it never passes through a shell command line.
+# Prints Claude Code's JSON result. Exit codes: 0 ok, 2 bad arguments,
+# 3 not in the sandbox, 4 no credential, 124 timed out, other = Claude Code's.
+set -uo pipefail
+
+WORKSPACE=/workspace/proxai
+TOKEN_FILE=/run/proxai/cc-token
+MAX_TURNS=25
+MAX_TURNS_LIMIT=60
+TIMEOUT=900
+TIMEOUT_LIMIT=1800
+PROJECT=""
+
+fail() { printf '{"is_error":true,"cc_run_error":"%s"}\n' "$2"; exit "$1"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --project)   PROJECT="${2:-}"; shift 2 ;;
+    --max-turns) MAX_TURNS="${2:-}"; shift 2 ;;
+    --timeout)   TIMEOUT="${2:-}"; shift 2 ;;
+    *) fail 2 "unknown argument: $1" ;;
+  esac
+done
+
+[ "${PROXAI_SANDBOX:-}" = "1" ] && [ -f /.dockerenv ] || fail 3 "cc-run only runs inside the proxai sandbox container"
+
+# One folder name under the workspace: letters, digits, dot, dash, underscore.
+[[ "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || fail 2 "project must be a single folder name under ~/dev/proxai"
+[[ "$MAX_TURNS" =~ ^[0-9]+$ ]] && [ "$MAX_TURNS" -ge 1 ] || fail 2 "max-turns must be a positive number"
+[[ "$TIMEOUT" =~ ^[0-9]+$ ]] && [ "$TIMEOUT" -ge 30 ] || fail 2 "timeout must be at least 30 seconds"
+[ "$MAX_TURNS" -le "$MAX_TURNS_LIMIT" ] || MAX_TURNS=$MAX_TURNS_LIMIT
+[ "$TIMEOUT" -le "$TIMEOUT_LIMIT" ] || TIMEOUT=$TIMEOUT_LIMIT
+
+[ -d "$WORKSPACE" ] && [ -w "$WORKSPACE" ] || fail 2 "workspace $WORKSPACE is not mounted writable"
+DIR="$WORKSPACE/$PROJECT"
+mkdir -p "$DIR" || fail 2 "could not create project folder"
+
+[ -s "$TOKEN_FILE" ] || fail 4 "no Claude Code credential mounted at $TOKEN_FILE"
+
+TASK="$(cat)"
+[ -n "${TASK//[[:space:]]/}" ] || fail 2 "empty task"
+
+# Subscription only: never fall back to an API key, even if one appears.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")"
+export HOME=/root
+
+cd "$DIR" || fail 2 "could not enter project folder"
+RUNS=/root/.cache/cc-runs
+mkdir -p "$RUNS"
+OUT="$RUNS/$(date +%Y%m%d-%H%M%S)-$PROJECT.json"
+printf '%s' "$TASK" | timeout --kill-after=15 "$TIMEOUT" \
+  claude -p --output-format json --max-turns "$MAX_TURNS" --dangerously-skip-permissions >"$OUT" 2>"$OUT.err"
+rc=$?
+[ $rc -eq 124 ] && fail 124 "timed out after ${TIMEOUT}s"
+
+# One compact line for Hermes (full JSON stays in $OUT). Long results are cut at 6000 chars.
+python3 - "$OUT" "$OUT.err" "$rc" <<'PY'
+import json, sys
+out, err, rc = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    data = json.loads(open(out).read() or "{}")
+except ValueError:
+    data = {}
+if not data:
+    tail = open(err).read()[-1500:].strip()
+    data = {"is_error": True, "cc_run_error": f"claude exited {rc} without a result: {tail}"}
+res = str(data.get("result") or "")
+keep = {k: data.get(k) for k in ("is_error", "subtype", "num_turns", "duration_ms", "session_id", "cc_run_error") if k in data}
+keep["result"] = res[:6000] + (" …[cut, full output in sandbox ~/.cache/cc-runs]" if len(res) > 6000 else "")
+print(json.dumps(keep, ensure_ascii=False))
+PY
+exit $rc

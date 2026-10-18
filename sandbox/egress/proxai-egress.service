@@ -1,0 +1,16 @@
+# ProxAI egress proxy: the Hermes sandbox's only way to the internet (allow-list + token swap).
+# Install: ln -s ~/.hermes/profiles/proxai/sandbox/egress/proxai-egress.service ~/.config/systemd/user/
+#          systemctl --user daemon-reload && systemctl --user enable --now proxai-egress
+[Unit]
+Description=ProxAI sandbox egress proxy (iron-proxy, allow-list)
+After=docker.service
+Before=hermes-gateway-proxai.service
+
+[Service]
+ExecStart=%h/.hermes/profiles/proxai/sandbox/egress/run-egress.sh
+ExecStop=/usr/bin/docker stop -t 10 proxai-egress
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

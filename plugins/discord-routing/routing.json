@@ -115,6 +115,7 @@
         "session_search"
       ],
       "chat": [
+        "claude_code",
         "web",
         "file",
         "cronjob",
@@ -143,6 +144,7 @@
         "vision"
       ],
       "diagnose": [
+        "claude_code",
         "web",
         "file",
         "clarify",
@@ -159,6 +161,7 @@
         "image_gen"
       ],
       "code": [
+        "claude_code",
         "web",
         "file",
         "terminal",

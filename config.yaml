@@ -47,8 +47,23 @@ terminal:
   shell_init_files: []
   auto_source_bashrc: true
   docker_forward_env: []
+  # Phase 7: the sandbox image has Claude Code + cc-run (sandbox/build-image.sh).
+  docker_image: proxai-sandbox:2.1.302
+  # All traffic goes through the egress proxy (sandbox/egress/): allow-list + token swap.
   docker_env:
     OBSIDIAN_VAULT_PATH: /workspace/vault/10-Wiki
+    HTTPS_PROXY: http://proxai-egress:9090
+    https_proxy: http://proxai-egress:9090
+    HTTP_PROXY: http://proxai-egress:9091
+    http_proxy: http://proxai-egress:9091
+    NO_PROXY: 127.0.0.1,localhost,::1
+    no_proxy: 127.0.0.1,localhost,::1
+    NODE_EXTRA_CA_CERTS: /etc/proxai/egress-ca.crt
+    SSL_CERT_FILE: /etc/proxai/egress-ca.crt
+    REQUESTS_CA_BUNDLE: /etc/proxai/egress-ca.crt
+    CURL_CA_BUNDLE: /etc/proxai/egress-ca.crt
+    PIP_CERT: /etc/proxai/egress-ca.crt
+    GIT_SSL_CAINFO: /etc/proxai/egress-ca.crt
   container_cpu: 2.0
   container_memory: 5120
   container_disk: 51200
@@ -65,8 +80,15 @@ terminal:
     - /home/prox/.local/share/proxai/empty:/workspace/vault/07-Security:ro
     - /home/prox/.local/share/proxai/empty:/workspace/vault/.git:ro
     - /home/prox/.local/share/proxai/empty:/workspace/vault/.obsidian:ro
+    # Phase 7: Hermes's own workspace, the only rw folder outside its profile and the vault.
+    - /home/prox/dev/proxai:/workspace/proxai:rw
+    - /home/prox/.hermes/profiles/proxai/egress/ca.crt:/etc/proxai/egress-ca.crt:ro
+    - /home/prox/.hermes/profiles/proxai/egress/cc-token:/run/proxai/cc-token:ro
   docker_mount_cwd_to_workspace: false
-  docker_extra_args: []
+  # --internal network: no route out except the proxai-egress proxy container.
+  docker_network: true
+  docker_extra_args:
+    - --network=proxai-sandbox
   docker_run_as_host_user: true
   persistent_shell: true
   lifetime_seconds: 300
@@ -498,6 +520,7 @@ platform_toolsets:
   cli:
     - browser
     - clarify
+    - claude_code
     - code_execution
     - connections
     - cronjob
@@ -518,6 +541,7 @@ platform_toolsets:
   discord:
     - browser
     - clarify
+    - claude_code
     - code_execution
     - connections
     - cronjob
@@ -628,6 +652,7 @@ _left_core_scoped:
 plugins:
   enabled:
     - discord-routing
+    - claude-code-delegation
     - hermes-session-reset-policy
     - homeassistant
   disabled: []
