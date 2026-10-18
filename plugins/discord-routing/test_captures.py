@@ -180,6 +180,36 @@ class Hook(Base):
         self.assertIn(notes[0].name, event.channel_prompt)
         self.assertEqual(event.raw_message.reactions, ["📝"])
 
+    def test_channel_from_chat_name(self):
+        f = self.plugin.channel_from_chat_name
+        self.assertEqual(f("Server / #brain-dump"), "brain-dump")
+        self.assertEqual(f("Server / #brain-dump / robot #2 ideas"), "brain-dump")
+        self.assertEqual(f("Server / #vr-ideas / a / b"), "vr-ideas")
+        self.assertEqual(f("general-chat"), "general-chat")
+        self.assertEqual(f("Server / Forum / post"), "")
+
+    def test_thread_cache_miss_routes_by_parent(self):
+        # No Discord client, so the cache "misses"; the thread title contains '#'.
+        self.plugin.guard.chat_channels.clear()
+        event, _, _ = self.dispatch_thread("Server / #general-chat / fix #3 build", "hi")
+        self.assertIn("general-chat", event.channel_prompt)
+        overrides = self.last_gateway._session_model_overrides["k"]
+        self.assertEqual(overrides["model"], "claude-sonnet-5-5")
+
+    def dispatch_thread(self, chat_name, text):
+        adapter = FakeAdapter()
+        source = types.SimpleNamespace(
+            platform="discord", chat_type="thread", chat_id="901", parent_chat_id="900",
+            chat_name=chat_name, user_id="42", user_name="nathan", thread_id="901", is_bot=False)
+        event = types.SimpleNamespace(
+            source=source, text=text, message_id="778", channel_prompt=None, raw_message=FakeRaw(),
+            message_type=types.SimpleNamespace(value="text"), timestamp=dt.datetime(2026, 10, 18, 9, 5))
+        self.last_gateway = types.SimpleNamespace(
+            adapters={"discord": adapter}, _session_model_overrides={},
+            _session_key_for_source=lambda s: "k")
+        result = asyncio.run(self.plugin._on_pre_gateway_dispatch(event=event, gateway=self.last_gateway))
+        return event, adapter, result
+
     def test_route_logged_to_security_log(self):
         self.dispatch("general-chat", "hello")
         log = next((self.vault / "07-Security/ProxAI-Audit").glob("*.md")).read_text()

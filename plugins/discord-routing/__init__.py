@@ -102,9 +102,23 @@ def _channel_name(source, client) -> str:
                 return channel.name
         except (TypeError, ValueError):
             pass
-    # Fallback: group chat names look like "Guild / #channel".
-    name = source.chat_name or ""
-    return name.rsplit("#", 1)[-1].strip() if "#" in name else name
+    # Discord's cache missed: use a channel already seen with this ID, then the chat name.
+    known = guard.chat_channels.get(str(lookup_id or ""))
+    if known:
+        return known
+    return channel_from_chat_name(source.chat_name or "")
+
+
+def channel_from_chat_name(name: str) -> str:
+    """Channel from a chat name: "Guild / #channel" or, for threads, "Guild / #channel / thread title".
+
+    Only the first segment that starts with "#" counts, so a thread title never becomes the channel.
+    """
+    for part in name.split(" / "):
+        part = part.strip()
+        if part.startswith("#") and len(part) > 1:
+            return part[1:].strip()
+    return name.strip() if " / " not in name and "#" not in name else ""
 
 
 def _privacy_prompt(folders: list[str]) -> str:
