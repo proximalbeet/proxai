@@ -26,6 +26,13 @@ the file. Separating them needs the gateway sandboxing from Phase 6 ("desktop ac
 `create` / `update` / `delete`.
 **Commands:** `/calendar` (next 7 days), `/calendar-confirm <code>`.
 
+**Other calendars Hermes may read** (e.g. a school account shown in your Google Calendar):
+`setup_calendar.py --add-read-calendar name@school.edu=School` (no sign-in; tests the read and
+prints the result), `--remove-read-calendar ADDRESS`, `--list-read-calendars`. Stored in
+`calendar.json`, which only you change; still read-only. If it says "not found", the other
+account's calendar isn't shared with this Google account: from that account, Google Calendar →
+its settings → Share with specific people → add this Gmail with "See all event details".
+
 **Adding the read scope to an existing setup:** Google Cloud → Data access → add
 `.../auth/calendar.events.readonly` → Save; then run `setup_calendar.py` again (no arguments; it
 keeps the client and the ProxAI calendar) and `--selftest`. No gateway restart needed: the plugin

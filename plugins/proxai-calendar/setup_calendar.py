@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from core import (CONFIG_DIR, SCOPE_APP, SCOPE_FREEBUSY, SCOPE_READ_EVENTS, TOKEN_URL, Calendar,  # noqa: E402
+from core import (CAL_ID_RE, CONFIG_DIR, SCOPE_APP, SCOPE_FREEBUSY, SCOPE_READ_EVENTS, TOKEN_URL, Calendar,  # noqa: E402
                   CalendarError, check_scopes, urllib_http, write_private_json)
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -129,6 +129,37 @@ def setup(args) -> None:
     print(f"created calendar '{args.name}' ({tz}); it appears in Google Calendar under 'My calendars'.")
 
 
+def read_calendars_cmd(args) -> int:
+    """Change which calendars Hermes may read. Writes stay on the ProxAI calendar only."""
+    cfg_path = CONFIG_DIR / "calendar.json"
+    cfg = json.loads(cfg_path.read_text())
+    cals = cfg.get("read_calendars") or [{"id": "primary", "label": "Nathan's"}]
+    for spec in args.add_read_calendar or []:
+        cid, _, label = spec.partition("=")
+        cid = cid.strip()
+        if not CAL_ID_RE.match(cid):
+            raise SystemExit(f"'{cid}' doesn't look like a calendar address (e.g. name@school.edu)")
+        if cid == cfg["calendar_id"]:
+            raise SystemExit("That's the ProxAI calendar itself; it's always included.")
+        cals = [c for c in cals if c["id"] != cid] + [{"id": cid, "label": label.strip() or cid}]
+    for cid in args.remove_read_calendar or []:
+        cals = [c for c in cals if c["id"] != cid.strip()]
+    if args.add_read_calendar or args.remove_read_calendar:
+        cfg["read_calendars"] = cals
+        write_private_json(cfg_path, cfg)
+    print("Hermes can READ these calendars (it can only change the ProxAI calendar):")
+    cal = Calendar()
+    for c in cals:
+        try:
+            cal.config = lambda c=c: {**cfg, "read_calendars": [c]}  # test one at a time
+            n = len(cal.my_events())
+            status = f"OK, {n} event(s) in the next 7 days" if not cal.warnings else cal.warnings[0]
+        except CalendarError as e:
+            status = str(e)
+        print(f"  {c['label']:<14} {c['id']}  →  {status}")
+    return 0
+
+
 def selftest() -> int:
     cal, ok = Calendar(), True
 
@@ -187,10 +218,17 @@ def main() -> int:
     p.add_argument("--no-read-events", action="store_true", help="don't let Hermes read your own events")
     p.add_argument("--name", default="ProxAI", help="calendar name (default ProxAI)")
     p.add_argument("--selftest", action="store_true", help="run the permission test")
+    p.add_argument("--add-read-calendar", metavar="ADDRESS[=LABEL]", action="append",
+                   help="let Hermes READ another calendar on your Google Calendar, e.g. "
+                        "school@mtu.edu=School (no sign-in needed)")
+    p.add_argument("--remove-read-calendar", metavar="ADDRESS", action="append")
+    p.add_argument("--list-read-calendars", action="store_true")
     a = p.parse_args()
     try:
         if a.selftest:
             return selftest()
+        if a.add_read_calendar or a.remove_read_calendar or a.list_read_calendars:
+            return read_calendars_cmd(a)
         setup(a)
         return 0
     except CalendarError as e:

@@ -8,7 +8,8 @@ Permission model
   change them; Nathan 10-18) and ``calendar.freebusy`` (busy/free times only). A token with any
   other scope is refused, so a broader token can't be swapped in.
 * The calendar id for writes comes from ``calendar.json`` written at setup, never from the model.
-  Reads of Nathan's events go to his ``primary`` calendar only.
+  Reads of Nathan's events go to his ``primary`` calendar plus any he added with
+  ``setup_calendar.py --add-read-calendar`` (``read_calendars`` in calendar.json).
 * Events never get attendees, and every write uses ``sendUpdates=none``: no invites or emails.
 
 Files (``~/.hermes/profiles/proxai/google-calendar/``, folder 700, files 600, not in git):
@@ -44,6 +45,7 @@ API = "https://www.googleapis.com/calendar/v3"
 MAX_TITLE, MAX_DESC = 200, 2000
 MAX_EVENT_DAYS, MAX_RANGE_DAYS = 7, 92
 EVENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,1024}$")
+CAL_ID_RE = re.compile(r"^(primary|[A-Za-z0-9._%+#-]{1,200}@[A-Za-z0-9.-]{1,200})$")
 
 
 class CalendarError(Exception):
@@ -246,24 +248,41 @@ class Calendar:
             raise CalendarError(f"busy lookup refused: {cal['errors'][0].get('reason')}")
         return cal.get("busy", [])
 
+    def read_calendars(self) -> list[dict]:
+        """Calendars Hermes may READ, set by Nathan with setup_calendar.py (never by the model).
+        Default: his primary calendar."""
+        cfg = self.config()
+        cals = cfg.get("read_calendars") or [{"id": "primary", "label": "Nathan's"}]
+        return [c for c in cals if isinstance(c, dict) and CAL_ID_RE.match(str(c.get("id", "")))
+                and c["id"] != cfg["calendar_id"]]  # ProxAI's own events come from list_events
+
     def my_events(self, start: str | None = None, end: str | None = None) -> list[dict]:
-        """Nathan's own events on his primary calendar, read-only. Only title, time and place:
-        descriptions and attendee lists are left out (invites are text anyone can send)."""
+        """Nathan's events on the calendars he allowed, read-only. Only title, time and place:
+        descriptions and attendee lists are left out (invites are text anyone can send).
+        A calendar that can't be read is reported in ``self.warnings`` instead of failing all."""
         self._token()
         if SCOPE_READ_EVENTS not in getattr(self, "scopes", set()):
             raise CalendarError("reading Nathan's own events wasn't allowed at setup "
                                 "(calendar.events.readonly not granted); only busy times are visible")
         t0, t1 = range_bounds(start, end)
-        resp = self.api("GET", "/calendars/primary/events",
-                        {"timeMin": t0, "timeMax": t1, "singleEvents": "true",
-                         "orderBy": "startTime", "maxResults": "100"})
-        out = []
-        for e in resp.get("items", []):
-            s, en = e.get("start", {}), e.get("end", {})
-            out.append({"calendar": "Nathan's", "title": (e.get("summary") or "(no title)")[:200],
-                        "start": s.get("dateTime") or s.get("date"),
-                        "end": en.get("dateTime") or en.get("date"),
-                        "location": (e.get("location") or "")[:200]})
+        out, self.warnings = [], []
+        for cal in self.read_calendars():
+            try:
+                resp = self.api("GET", "/calendars/" + urllib.parse.quote(cal["id"], safe="") + "/events",
+                                {"timeMin": t0, "timeMax": t1, "singleEvents": "true",
+                                 "orderBy": "startTime", "maxResults": "100"})
+            except CalendarError as exc:
+                self.warnings.append(f"couldn't read {cal.get('label') or cal['id']}: {exc}")
+                continue
+            for e in resp.get("items", []):
+                if e.get("status") == "cancelled":
+                    continue
+                s, en = e.get("start", {}), e.get("end", {})
+                out.append({"calendar": cal.get("label") or cal["id"],
+                            "title": (e.get("summary") or "(busy)")[:200],
+                            "start": s.get("dateTime") or s.get("date"),
+                            "end": en.get("dateTime") or en.get("date"),
+                            "location": (e.get("location") or "")[:200]})
         return out
 
     def agenda(self, start: str | None = None, end: str | None = None) -> list[dict]:
