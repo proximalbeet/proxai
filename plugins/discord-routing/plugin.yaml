@@ -1,6 +1,10 @@
 name: discord-routing
-version: "1.0.0"
-description: "Per-channel model routing for the ProxAI Discord bot. Picks a model tier from routing.json by channel name (threads follow their parent channel), handles !model and !opus, logs each routed message to #bot-audit-log, and adds the vault privacy rule for cloud tiers."
+version: "1.2.0"
+description: "Per-channel model routing for the ProxAI Discord bot. Picks a model tier from routing.json by channel name (threads follow their parent channel), handles !model and !opus, logs each routed message to #bot-audit-log, adds the vault privacy rule for cloud tiers, saves capture-channel notes itself, and guards tool calls (protected paths blocked, everything logged to the write-only 07-Security/ProxAI-Audit log)."
 author: "prox"
 provides_hooks:
   - pre_gateway_dispatch
+  - pre_tool_call
+  - post_tool_call
+provides_tools:
+  - report_security_event

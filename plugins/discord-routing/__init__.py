@@ -9,6 +9,8 @@ Runs on ``pre_gateway_dispatch`` so no Hermes core files are modified:
     (threads use their parent channel's prompt)
   * posts one line per routed message to #bot-audit-log
   * adds the vault privacy rule to the channel prompt for cloud tiers
+  * saves captures in the ``routing.json`` ``captures`` channels itself
+    (see captures.py), so the model only writes the reply
 """
 from __future__ import annotations
 
@@ -16,8 +18,12 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from . import captures
+from .guard import REPORT_SCHEMA, guard
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +134,71 @@ async def _send_audit(client, source_channel: str, user_name: str, label: str, e
         logger.debug("[discord-routing] Audit log delivery failed: %s", exc)
 
 
+def _allowed_capture_user(source, adapter) -> bool:
+    """Only the allowed Discord user's own messages are ever saved.
+
+    Uses the allow-list the Discord adapter loaded at connect time; the env var is a fallback.
+    """
+    if getattr(source, "is_bot", False):
+        return False
+    allowed = {str(u) for u in (getattr(adapter, "_allowed_user_ids", None) or set())}
+    if not allowed:
+        allowed = {u.strip() for u in os.getenv("DISCORD_ALLOWED_USERS", "").split(",") if u.strip()}
+    return "*" not in allowed and str(source.user_id or "") in allowed
+
+
+async def _run_capture(event, source, adapter, channel_name: str, config: dict) -> str:
+    """Save the capture for this message, if any. Returns an extra line for the channel prompt."""
+    captures_cfg = config.get("captures") or {}
+    kind = (captures_cfg.get("channels") or {}).get(channel_name)
+    if not kind or not _allowed_capture_user(source, adapter):
+        return ""
+    text = event.text or ""
+    if text.strip().startswith(("!", "/")):
+        return ""
+    msg_type = getattr(event.message_type, "value", event.message_type)
+    if msg_type in ("voice", "audio") and not captures.clean_text(text):
+        notice = "🎙️ Voice notes aren't saved here yet. Type it and I'll save it."
+        if adapter is not None:
+            await adapter.send(source.chat_id, notice)
+        return ("CAPTURE: this was a voice note and the plugin did not save it (voice capture isn't "
+                "supported yet). Don't write any files; just reply to what was said.")
+
+    writer = captures.CaptureWriter(Path(captures_cfg.get("vault_path", "~/Documents/ProxVault")))
+    now = event.timestamp if isinstance(event.timestamp, datetime) else datetime.now()
+    now = now.astimezone()
+    thread_id = source.thread_id or (source.chat_id if source.chat_type == "thread" else "")
+    try:
+        if kind == "brain_dump":
+            result = writer.brain_dump(text, str(event.message_id or ""), str(thread_id or ""), now)
+        elif kind == "daily_goals":
+            result = writer.daily_goals(text, now)
+        elif kind == "focus_session":
+            result = writer.focus_session(text, now)
+        else:
+            logger.warning("[discord-routing] Unknown capture kind %r for #%s", kind, channel_name)
+            return ""
+    except Exception as exc:
+        logger.warning("[discord-routing] Capture failed in #%s: %s", channel_name, exc)
+        return ("CAPTURE FAILED: the plugin could not save this message (" + str(exc)[:200] + "). "
+                "Tell Nathan it wasn't saved. Don't try to save it yourself.")
+
+    if result.saved:
+        logger.info("[discord-routing] Capture #%s: %s", channel_name, result.summary)
+        raw = getattr(event, "raw_message", None)
+        if raw is not None and hasattr(raw, "add_reaction"):
+            try:
+                await raw.add_reaction("📝")
+            except Exception as exc:
+                logger.debug("[discord-routing] Reaction failed: %s", exc)
+    if not result.summary:
+        return ("CAPTURE: nothing was saved for this message. Don't write, create or edit any files; "
+                "just reply.")
+    return (f"CAPTURE DONE BY THE SYSTEM: the routing plugin already {result.summary}. "
+            "Do NOT write, create or edit any files and don't call tools to save anything. "
+            "Reply in one or two lines and mention the filename if there is one.")
+
+
 async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     source = getattr(event, "source", None)
     if source is None or gateway is None:
@@ -143,6 +214,8 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     client = getattr(adapter, "_client", None)
     channel_name = _channel_name(source, client)
     text = (event.text or "").strip()
+    guard.configure(config)
+    guard.remember(source.chat_id, channel_name, client)
 
     if text.lower() == "!model":
         routing = _routing_for(channel_name, config)
@@ -168,6 +241,9 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
         "[discord-routing] #%s → model: %s%s",
         channel_name, routing["label"], " (opus escalation)" if escalated else "",
     )
+    guard.record("ROUTE", f"#{channel_name}",
+                 f"{source.user_name or 'unknown'} ({source.user_id}) → {routing['label']}"
+                 + (" [!opus]" if escalated else ""))
 
     # A prompt in routing.json replaces any ID-keyed discord.channel_prompts entry.
     channel_prompt = config.get("prompts", {}).get(channel_name)
@@ -181,6 +257,19 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     privacy = _privacy_prompt(blocked)
     if privacy:
         event.channel_prompt = f"{event.channel_prompt}\n\n{privacy}" if event.channel_prompt else privacy
+
+    # Tell the model which tools this channel allows (the guard enforces it either way).
+    tools_line = guard.policy.prompt_line(f"#{channel_name}")
+    if tools_line:
+        event.channel_prompt = f"{event.channel_prompt}\n\n{tools_line}" if event.channel_prompt else tools_line
+
+    # Capture channels: the plugin saves the note, the model only replies.
+    if not escalated:
+        capture_prompt = await _run_capture(event, source, adapter, channel_name, config)
+        if capture_prompt:
+            event.channel_prompt = (
+                f"{event.channel_prompt}\n\n{capture_prompt}" if event.channel_prompt else capture_prompt
+            )
 
     if client is not None and channel_name != _AUDIT_CHANNEL:
         asyncio.create_task(
@@ -196,3 +285,12 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
 
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
+    # Tool guard: protected paths blocked, every call logged to the write-only security log.
+    guard.configure(_load_config())
+    ctx.register_hook("pre_tool_call", guard.pre_tool_call)
+    ctx.register_hook("post_tool_call", guard.post_tool_call)
+    ctx.register_tool(
+        name="report_security_event", toolset="proxai_security", schema=REPORT_SCHEMA,
+        handler=guard.report_tool, emoji="🚨",
+        description="Log a security concern to the write-only 07-Security log",
+    )
