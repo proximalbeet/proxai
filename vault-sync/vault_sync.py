@@ -52,6 +52,9 @@ MAX_FILE_BYTES = 50 * 1024 * 1024  # GitHub warns at 50 MB and refuses 100 MB
 TRACKING_REF = f"refs/remotes/origin/{BRANCH}"
 # Folder names never shown in the state file / Discord alerts (the host log keeps full paths).
 PRIVATE_DIRS = ("01-Personal/", "07-Security/")
+# Append-only logs written on every Discord message: committing mid-write is fine (the rest
+# lands next run), so they never make a run wait.
+QUIET_EXEMPT = ("07-Security/ProxAI-Audit/",)
 # Per-device Obsidian state: never tracked (also listed in vault.gitignore).
 UNTRACK = (".obsidian/workspace.json", ".obsidian/workspace-mobile.json")
 
@@ -141,6 +144,8 @@ def preflight() -> None:
 def recently_written(paths: list[str]) -> list[str]:
     now, busy = time.time(), []
     for p in paths:
+        if p.startswith(QUIET_EXEMPT):
+            continue
         try:
             if now - (VAULT / p).stat().st_mtime < QUIET_SECS:
                 busy.append(p)

@@ -123,6 +123,14 @@ class VaultSyncTest(unittest.TestCase):
         self.assertEqual(s["result"], "skipped")
         self.assertEqual(sh(self.desktop, "rev-list", "--count", "HEAD"), "1")
 
+    def test_security_log_syncs_while_being_written(self):
+        write(self.desktop / "07-Security/ProxAI-Audit/2026-10-18.md", "ROUTE ...\n", age=0)
+        self.assertEqual(self.vs.run(), 0)
+        s = self.state_json()
+        self.assertEqual((s["result"], s["committed"]), ("ok", 1))
+        self.assertIn("07-Security/ProxAI-Audit/2026-10-18.md",
+                      sh(self.remote, "ls-tree", "-r", "--name-only", "main"))
+
     def test_waits_for_the_refiler_lock(self):
         self.state.mkdir(parents=True, exist_ok=True)
         with (self.state / "vault.lock").open("w") as lock:

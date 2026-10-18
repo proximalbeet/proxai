@@ -37,7 +37,7 @@ the plaintext token.
 | File | |
 |---|---|
 | `vault_sync.py` | The sync (Python stdlib + git). `--dry-run`, `--status`, `prepare [--apply]` |
-| `test_vault_sync.py` | 10 tests on throwaway repos (bare "GitHub" + laptop + desktop clones) |
+| `test_vault_sync.py` | 11 tests on throwaway repos (bare "GitHub" + laptop + desktop clones) |
 | `vault.gitignore` | The vault's `.gitignore`, installed by `prepare` |
 | `systemd/proxai-vault-sync.{service,timer}` | Sandboxed oneshot + 10-minute timer |
 | `../plugins/vault-sync/` | Hermes side: `vault_sync` tool, `/vault-sync` command, alerts |
@@ -56,8 +56,10 @@ the plaintext token.
 
 ## Decisions (Nathan)
 
-1. **Security log on GitHub?** `07-Security/ProxAI-Audit/` is ignored, so it stays on the desktop
-   (default). Remove that line from the vault's `.gitignore` to sync it
+1. **Security log on GitHub: yes** (Nathan, 10-18: the repo is private and the container can't
+   read `07-Security`). `07-Security/ProxAI-Audit/` syncs like any note. It's append-only and only
+   the desktop writes it, so it never conflicts, and it's exempt from the 15 s quiet check (the
+   guard writes to it on every message, which would otherwise keep postponing the sync)
 2. **Daily notes:** normal merges (default: a same-line edit pauses the sync). If daily-note
    conflicts become common, add `00-Daily/*.md merge=union` to the vault's `.gitattributes`
    (keeps both sides' lines; can duplicate a line)
@@ -116,7 +118,7 @@ the plaintext token.
 
 ## Tests
 
-- `python3 vault-sync/test_vault_sync.py` (10 tests, throwaway repos, no network)
+- `python3 vault-sync/test_vault_sync.py` (11 tests, throwaway repos, no network)
 - Live: edit different notes on both computers within a few minutes → both appear on both, no
   conflict. Edit the same line of one note on both → `/vault-sync` shows "PAUSED: conflict",
   one ⚠️ line in `#bot-audit-log`, nothing changed on disk; fix it → ✅ line
