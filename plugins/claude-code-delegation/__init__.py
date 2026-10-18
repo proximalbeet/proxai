@@ -129,7 +129,10 @@ def _handle_claude_code(args: dict, task_id: str | None = None, session_id: str 
     project = str(args.get("project") or "").strip()
     turns = _clamp(args.get("max_turns"), _DEFAULT_TURNS, _MAX_TURNS)
     minutes = _clamp(args.get("timeout_minutes"), _DEFAULT_MINUTES, _MAX_MINUTES)
-    channel = _session("HERMES_SESSION_CHAT_NAME") or _session("HERMES_SESSION_PLATFORM") or "unknown"
+    # chat_name looks like "Server / #channel / thread title"; keep just the channel.
+    chat_name = _session("HERMES_SESSION_CHAT_NAME")
+    hashed = [p.strip()[1:] for p in chat_name.split(" / ") if p.strip().startswith("#")]
+    channel = (hashed[0] if hashed else chat_name) or _session("HERMES_SESSION_PLATFORM") or "unknown"
     user = _session("HERMES_SESSION_USER_NAME") or "unknown"
 
     def refuse(msg: str) -> str:
@@ -164,23 +167,21 @@ def _handle_claude_code(args: dict, task_id: str | None = None, session_id: str 
     if not ok and not error:
         error = cc.get("result") or (output[-800:] if output else f"exit code {exit_code}")
 
-    result = {
-        "ok": ok,
-        "project": project,
-        "folder_on_host": f"~/dev/proxai/{project}",
-        "result": cc.get("result", "") if ok else "",
-        "error": "" if ok else str(error)[:2000],
-        "num_turns": cc.get("num_turns"),
-        "duration_s": elapsed,
-        "exit_code": exit_code,
-    }
+    # Hermes treats any result text containing "error" as a failed call, so the key is
+    # only present when the run really failed.
+    result = {"ok": ok, "success": ok, "project": project, "folder_on_host": f"~/dev/proxai/{project}"}
+    if ok:
+        result["result"] = cc.get("result", "")
+    else:
+        result["error"] = str(error)[:2000]
+    result.update({"num_turns": cc.get("num_turns"), "duration_s": elapsed, "exit_code": exit_code})
 
     _log({
         "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "channel": channel, "user": user,
         "session_id": session_id, "project": project, "max_turns": turns, "timeout_s": seconds,
         "task": task[:2000], "ok": ok, "exit_code": exit_code, "num_turns": cc.get("num_turns"),
         "duration_s": elapsed, "cc_session_id": cc.get("session_id"),
-        "error": result["error"][:500], "result_preview": result["result"][:500],
+        "error": result.get("error", "")[:500], "result_preview": result.get("result", "")[:500],
     })
     mark = "✅" if ok else "❌"
     _post_audit(f"🤖 Claude Code {mark} `#{channel}` · **{user}** · project `{project}` · "
