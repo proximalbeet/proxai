@@ -30,6 +30,9 @@ node_modules/
 !plugins/discord-routing/**
 !plugins/claude-code-delegation/
 !plugins/claude-code-delegation/**
+# Community plugin, pinned copy of the reviewed commit (fastfinge/hermes-session-reset-policy 493df02)
+!plugins/hermes-session-reset-policy/
+!plugins/hermes-session-reset-policy/**
 __pycache__/
 
 # Vault refiler (host-side, files _inbox notes)
