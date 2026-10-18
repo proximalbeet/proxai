@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the ProxAI vault refiler every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+
+[Install]
+WantedBy=timers.target

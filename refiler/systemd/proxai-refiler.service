@@ -1,0 +1,18 @@
+[Unit]
+Description=ProxAI vault refiler (files _inbox notes by type + area)
+Documentation=file://%h/.hermes/profiles/proxai/refiler/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.hermes/profiles/proxai/refiler/refiler.py --apply
+Environment=PROXAI_VAULT=%h/Documents/ProxVault
+
+# Sandbox: the refiler sees only the vault, its own code and its log folder.
+ProtectHome=tmpfs
+BindPaths=%h/Documents/ProxVault %h/.local/state/proxai
+BindReadOnlyPaths=%h/.hermes/profiles/proxai/refiler
+InaccessiblePaths=-%h/Documents/ProxVault/01-Personal -%h/Documents/ProxVault/07-Security
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes

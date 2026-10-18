@@ -29,6 +29,11 @@ node_modules/
 !plugins/discord-routing/**
 __pycache__/
 
+# Vault refiler (host-side, files _inbox notes)
+!refiler/
+!refiler/**
+__pycache__/
+
 # Voice pipeline scripts only (no models, reference audio or virtualenvs)
 !voice/
 !voice/tts_pipeline.py
