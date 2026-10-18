@@ -95,7 +95,9 @@
       "computer_use"
     ],
     "always_allow": [
-      "report_security_event"
+      "report_security_event",
+      "tool_search",
+      "tool_describe"
     ],
     "default_profile": "readonly",
     "profiles": {

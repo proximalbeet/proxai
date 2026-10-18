@@ -145,6 +145,17 @@ class GuardTest(unittest.TestCase):
         self.at("announcements")
         self.assertIsNone(self.g.pre_tool_call(tool_name="report_security_event", args={"summary": "x"}))
 
+    def test_tool_search_lookups_always_allowed(self):
+        # Tool Search: the model looks a tool up before calling it. Lookups only describe tools;
+        # the real call (unwrapped from tool_call by Hermes) still goes through the channel limits.
+        self.use_real_policy()
+        self.at("code-assist")
+        for tool in ("tool_search", "tool_describe"):
+            self.assertIsNone(self.g.pre_tool_call(tool_name=tool, args={"name": "claude_code"}), tool)
+        self.at("build-status")
+        self.assertIsNone(self.g.pre_tool_call(tool_name="tool_describe", args={"name": "write_file"}))
+        self.assertEqual(self.g.pre_tool_call(tool_name="write_file", args={})["action"], "block")
+
     def test_prompt_lines(self):
         self.use_real_policy()
         self.assertIn("no tools are available", self.g.policy.prompt_line("#announcements"))
