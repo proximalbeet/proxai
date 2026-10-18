@@ -1,0 +1,8 @@
+name: proxai-calendar
+version: "1.0.0"
+description: "Phase 9: calendar tool for ProxAI's own Google calendar only (scope calendar.app.created, optional calendar.freebusy for busy times). Host-side; no invites; deletes need /calendar-confirm from Nathan; 20 writes/hour; every change logged and posted to #bot-audit-log."
+author: "prox"
+provides_tools:
+  - calendar
+provides_hooks:
+  - pre_gateway_dispatch

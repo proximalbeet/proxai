@@ -30,6 +30,9 @@ node_modules/
 !plugins/discord-routing/**
 !plugins/claude-code-delegation/
 !plugins/claude-code-delegation/**
+# Phase 9 calendar plugin (its token lives in google-calendar/, which stays out)
+!plugins/proxai-calendar/
+!plugins/proxai-calendar/**
 __pycache__/
 
 # Vault refiler (host-side, files _inbox notes)
