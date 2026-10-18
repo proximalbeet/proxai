@@ -372,6 +372,10 @@ prefill_messages_file: ''
 goals:
   max_turns: 20
 skills:
+  # Phase 9 (Nathan, 10-18): the bundled google-workspace skill wants full Gmail/Drive/Calendar;
+  # calendar goes through the narrow proxai-calendar plugin instead.
+  disabled:
+    - google-workspace
   external_dirs: []
   template_vars: true
   inline_shell: false
@@ -532,6 +536,7 @@ platform_toolsets:
     - homeassistant
     - image_gen
     - memory
+    - proxai_calendar
     - session_search
     - skills
     - terminal
@@ -555,6 +560,7 @@ platform_toolsets:
     - homeassistant
     - image_gen
     - memory
+    - proxai_calendar
     - session_search
     - skills
     - terminal
@@ -658,6 +664,7 @@ plugins:
     - claude-code-delegation
     - hermes-session-reset-policy
     - homeassistant
+    - proxai-calendar
   disabled: []
 _left_core_installed:
   - homeassistant
