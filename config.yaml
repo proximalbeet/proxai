@@ -620,8 +620,9 @@ _left_core_scoped:
   - homeassistant
 plugins:
   enabled:
-    - homeassistant
     - discord-routing
+    - hermes-session-reset-policy
+    - homeassistant
   disabled: []
 _left_core_installed:
   - homeassistant
