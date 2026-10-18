@@ -48,8 +48,13 @@ class Capture:
     notice: str = ""    # optional message the plugin posts itself
 
 
+# What the Discord adapter puts in event.text for a message with no text (e.g. a voice note).
+EMPTY_PLACEHOLDER = "(The user sent a message with no text content)"
+
+
 def clean_text(text: str) -> str:
-    return _MENTION_RE.sub("", text or "").strip()
+    text = _MENTION_RE.sub("", text or "").strip()
+    return "" if text == EMPTY_PLACEHOLDER else text
 
 
 def resolve_channel_mentions(text: str, lookup) -> str:
@@ -74,9 +79,10 @@ def _yaml_str(value: str) -> str:
 
 
 class CaptureWriter:
-    def __init__(self, vault: Path, state_dir: Path = STATE_DIR):
+    def __init__(self, vault: Path, state_dir: Optional[Path] = None):
         self.vault = Path(vault).expanduser().resolve()
-        self.state_dir = Path(state_dir)
+        # Read STATE_DIR at call time (not as a default argument) so tests can point it at a temp dir.
+        self.state_dir = Path(state_dir) if state_dir else STATE_DIR
 
     # ---- file helpers ----------------------------------------------------
 
