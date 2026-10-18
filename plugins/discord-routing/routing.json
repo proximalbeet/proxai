@@ -194,5 +194,20 @@
       "vr-ideas": "ideas",
       "code-assist": "code"
     }
+  },
+  "history_backfill": {
+    "_comment": "Channels where the plugin drops the backfilled Discord history (each message stands alone). The global cap is discord.history_backfill_limit in config.yaml.",
+    "off": [
+      "brain-dump",
+      "daily-goals",
+      "focus-sessions",
+      "announcements",
+      "build-status",
+      "bot-audit-log",
+      "sandbox-alerts",
+      "model-logs",
+      "ollama-outputs",
+      "bot-commands"
+    ]
   }
 }

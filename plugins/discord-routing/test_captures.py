@@ -150,6 +150,7 @@ class Hook(Base):
         cfg["captures"]["vault_path"] = str(self.vault)
         cfg["security"]["vault_path"] = str(self.vault)  # never the real vault
         self.plugin.guard.log = None
+        self.plugin.guard.chat_channels.clear()
         self.cfg_path = Path(self.tmp.name) / "routing.json"
         self.cfg_path.write_text(json.dumps(cfg))
         self.plugin._CONFIG_PATH = self.cfg_path
@@ -158,6 +159,7 @@ class Hook(Base):
 
     def dispatch(self, channel, text, user="42", chat_type="group", msg_type="text", thread_id=None):
         adapter = FakeAdapter()
+        self.plugin.guard.chat_channels.clear()  # each call is a different channel with the same fake ID
         source = types.SimpleNamespace(
             platform="discord", chat_type=chat_type, chat_id="900", parent_chat_id=None,
             chat_name=f"Server / #{channel}", user_id=user, user_name="nathan", thread_id=thread_id,
@@ -179,6 +181,52 @@ class Hook(Base):
         self.assertIn("CAPTURE DONE BY THE SYSTEM", event.channel_prompt)
         self.assertIn(notes[0].name, event.channel_prompt)
         self.assertEqual(event.raw_message.reactions, ["📝"])
+
+    def test_history_dropped_only_where_off(self):
+        for chat_id, channel, kept in (("910", "brain-dump", False), ("911", "general-chat", True)):
+            adapter = FakeAdapter()
+            source = types.SimpleNamespace(
+                platform="discord", chat_type="group", chat_id=chat_id, parent_chat_id=None,
+                chat_name=f"Server / #{channel}", user_id="42", user_name="nathan", thread_id=None,
+                is_bot=False)
+            event = types.SimpleNamespace(
+                source=source, text="hello?", message_id="779", channel_prompt=None, raw_message=FakeRaw(),
+                message_type=types.SimpleNamespace(value="text"), timestamp=dt.datetime(2026, 10, 18, 9, 5),
+                channel_context="[Recent channel messages]\nold stuff")
+            gateway = types.SimpleNamespace(adapters={"discord": adapter}, _session_model_overrides={},
+                                            _session_key_for_source=lambda s: "k")
+            asyncio.run(self.plugin._on_pre_gateway_dispatch(event=event, gateway=gateway))
+            self.assertEqual(event.channel_context is not None, kept, channel)
+
+    def test_channel_from_chat_name(self):
+        f = self.plugin.channel_from_chat_name
+        self.assertEqual(f("Server / #brain-dump"), "brain-dump")
+        self.assertEqual(f("Server / #brain-dump / robot #2 ideas"), "brain-dump")
+        self.assertEqual(f("Server / #vr-ideas / a / b"), "vr-ideas")
+        self.assertEqual(f("general-chat"), "general-chat")
+        self.assertEqual(f("Server / Forum / post"), "")
+
+    def test_thread_cache_miss_routes_by_parent(self):
+        # No Discord client, so the cache "misses"; the thread title contains '#'.
+        self.plugin.guard.chat_channels.clear()
+        event, _, _ = self.dispatch_thread("Server / #general-chat / fix #3 build", "hi")
+        self.assertIn("general-chat", event.channel_prompt)
+        overrides = self.last_gateway._session_model_overrides["k"]
+        self.assertEqual(overrides["model"], "claude-sonnet-5-5")
+
+    def dispatch_thread(self, chat_name, text):
+        adapter = FakeAdapter()
+        source = types.SimpleNamespace(
+            platform="discord", chat_type="thread", chat_id="901", parent_chat_id="900",
+            chat_name=chat_name, user_id="42", user_name="nathan", thread_id="901", is_bot=False)
+        event = types.SimpleNamespace(
+            source=source, text=text, message_id="778", channel_prompt=None, raw_message=FakeRaw(),
+            message_type=types.SimpleNamespace(value="text"), timestamp=dt.datetime(2026, 10, 18, 9, 5))
+        self.last_gateway = types.SimpleNamespace(
+            adapters={"discord": adapter}, _session_model_overrides={},
+            _session_key_for_source=lambda s: "k")
+        result = asyncio.run(self.plugin._on_pre_gateway_dispatch(event=event, gateway=self.last_gateway))
+        return event, adapter, result
 
     def test_route_logged_to_security_log(self):
         self.dispatch("general-chat", "hello")

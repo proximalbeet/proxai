@@ -102,9 +102,23 @@ def _channel_name(source, client) -> str:
                 return channel.name
         except (TypeError, ValueError):
             pass
-    # Fallback: group chat names look like "Guild / #channel".
-    name = source.chat_name or ""
-    return name.rsplit("#", 1)[-1].strip() if "#" in name else name
+    # Discord's cache missed: use a channel already seen with this ID, then the chat name.
+    known = guard.chat_channels.get(str(lookup_id or ""))
+    if known:
+        return known
+    return channel_from_chat_name(source.chat_name or "")
+
+
+def channel_from_chat_name(name: str) -> str:
+    """Channel from a chat name: "Guild / #channel" or, for threads, "Guild / #channel / thread title".
+
+    Only the first segment that starts with "#" counts, so a thread title never becomes the channel.
+    """
+    for part in name.split(" / "):
+        part = part.strip()
+        if part.startswith("#") and len(part) > 1:
+            return part[1:].strip()
+    return name.strip() if " / " not in name and "#" not in name else ""
 
 
 def _privacy_prompt(folders: list[str]) -> str:
@@ -257,6 +271,10 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     privacy = _privacy_prompt(blocked)
     if privacy:
         event.channel_prompt = f"{event.channel_prompt}\n\n{privacy}" if event.channel_prompt else privacy
+
+    # Cost: drop the backfilled channel history where each message stands alone.
+    if channel_name in (config.get("history_backfill") or {}).get("off", []) and getattr(event, "channel_context", None):
+        event.channel_context = None
 
     # Tell the model which tools this channel allows (the guard enforces it either way).
     tools_line = guard.policy.prompt_line(f"#{channel_name}")

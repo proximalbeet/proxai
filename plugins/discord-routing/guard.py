@@ -225,7 +225,8 @@ class Guard:
             self._session("HERMES_SESSION_PARENT_CHAT_ID"))
         if not name:
             raw = self._session("HERMES_SESSION_CHAT_NAME")
-            name = raw.rsplit("#", 1)[-1].strip() if "#" in raw else ""
+            name = next((p.strip()[1:].strip() for p in raw.split(" / ")
+                         if p.strip().startswith("#") and len(p.strip()) > 1), "")
         return f"#{name}" if name else ""
 
     # ---- logging + alerts ---------------------------------------------------
