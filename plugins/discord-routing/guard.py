@@ -120,6 +120,26 @@ def _toolset_of(tool_name: str) -> str:
         return ""
 
 
+# Tool Search: lookups plus the bridge that calls tools not sent in the request (e.g. claude_code).
+TOOL_SEARCH = ("tool_search", "tool_describe", "tool_call")
+
+
+def _tool_name(tool: Any) -> str:
+    """Name of a tool schema in Anthropic ({name}) or OpenAI ({function: {name}}) shape."""
+    if not isinstance(tool, dict):
+        return ""
+    return str(tool.get("name") or (tool.get("function") or {}).get("name") or "")
+
+
+def _has_tool_blocks(messages: Any) -> bool:
+    """True if the conversation already holds tool calls/results (providers then require tools)."""
+    try:
+        text = json.dumps(messages, default=str)
+    except (TypeError, ValueError):
+        return True
+    return any(k in text for k in ('"tool_use"', '"tool_result"', '"tool_calls"', '"role": "tool"'))
+
+
 class ToolPolicy:
     """Per-channel tool allow-lists from routing.json ``tool_policy``.
 
@@ -159,6 +179,20 @@ class ToolPolicy:
         if allowed is None or tool_name in allowed or (toolset and toolset in allowed):
             return None
         return f"{tool_name} isn't allowed in {channel}"
+
+    def visible(self, names: list[str], channel: str) -> set[str]:
+        """Tools worth sending to the model in this channel (others would only be blocked).
+
+        The Tool Search trio stays only when the channel may use a tool that isn't sent directly
+        (it's reached through tool_call), or when the channel has no limits."""
+        direct = [n for n in names if n and n not in TOOL_SEARCH]
+        keep = {n for n in direct if self.check(n, channel) is None}
+        allowed = self.allowed_for(channel)
+        needs_search = allowed is None or any(
+            not any(entry == n or entry == _toolset_of(n) for n in direct) for entry in allowed)
+        if needs_search:
+            keep |= {n for n in names if n in TOOL_SEARCH and n not in self.deny}
+        return keep
 
     def prompt_line(self, channel: str) -> str:
         allowed = self.allowed_for(channel)
@@ -284,6 +318,42 @@ class Guard:
                                "it, or tell Nathan which channel can do this."}
         self.record("TOOL", channel, f"{tool_name} {summarize_args(args)}")
         return None
+
+    def trim_tools(self, request: Any = None, **_kw) -> Optional[dict]:
+        """llm_request middleware: send only the tools this channel may use.
+
+        Each schema costs tokens on every call (~45k chars for all of them), and a tool the guard
+        would block is no use to the model. pre_tool_call still enforces the limits either way."""
+        if not isinstance(request, dict) or not isinstance(request.get("tools"), list):
+            return None
+        channel = self.current_channel()
+        if not channel:
+            return None
+        tools = request["tools"]
+        names = [_tool_name(t) for t in tools]
+        keep = self.policy.visible(names, channel)
+        kept = [t for t, n in zip(tools, names) if not n or n in keep]
+        if len(kept) == len(tools):
+            return None
+        new = dict(request)
+        if kept:
+            # Anthropic prompt caching marks the last tool; keep that marker on the new last one.
+            marker = next((t["cache_control"] for t in tools if isinstance(t, dict) and "cache_control" in t), None)
+            if marker is not None and not any(isinstance(t, dict) and "cache_control" in t for t in kept):
+                kept[-1] = {**kept[-1], "cache_control": marker}
+            new["tools"] = kept
+        else:
+            if _has_tool_blocks(request.get("messages")):
+                return None
+            new.pop("tools", None)
+            new.pop("tool_choice", None)
+        choice = new.get("tool_choice")
+        if isinstance(choice, dict):
+            named = choice.get("name") or (choice.get("function") or {}).get("name")
+            if named and named not in keep:
+                new["tool_choice"] = {"type": "auto"} if "name" in choice else "auto"
+        return {"request": new, "source": "discord-routing",
+                "reason": f"{channel}: {len(tools) - len(kept)} of {len(tools)} tools not allowed here"}
 
     def post_tool_call(self, tool_name: str = "", args: Any = None, status: str = "",
                        error_message: Optional[str] = None, result: Any = None, **_kw) -> None:

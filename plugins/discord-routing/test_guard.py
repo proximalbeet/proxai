@@ -145,6 +145,99 @@ class GuardTest(unittest.TestCase):
         self.at("announcements")
         self.assertIsNone(self.g.pre_tool_call(tool_name="report_security_event", args={"summary": "x"}))
 
+    # ---- request trimming (llm_request middleware) --------------------------
+
+    DIRECT = ["read_file", "search_files", "write_file", "terminal", "web_search", "delegate_task",
+              "text_to_speech", "clarify", "tool_search", "tool_describe", "tool_call"]
+
+    def anthropic_request(self, cache_last=True):
+        tools = [{"name": n, "description": "d", "input_schema": {}} for n in self.DIRECT]
+        if cache_last:
+            tools[-1]["cache_control"] = {"type": "ephemeral"}
+        return {"model": "claude", "messages": [{"role": "user", "content": "hi"}], "tools": tools,
+                "tool_choice": {"type": "auto"}}
+
+    def names(self, out):
+        return [t.get("name") or t["function"]["name"] for t in out["request"].get("tools", [])]
+
+    def use_trim_policy(self):
+        self.use_real_policy()
+        toolsets = {"web_search": "web", "terminal": "terminal", "write_file": "file", "read_file": "file",
+                    "search_files": "file", "delegate_task": "delegation", "text_to_speech": "tts",
+                    "clarify": "clarify", "discord_admin": "discord_admin"}
+        patcher = mock.patch.object(sys.modules["dr_test_pkg.guard"], "_toolset_of",
+                                    lambda n: toolsets.get(n, ""))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_capture_channel_gets_only_its_tools(self):
+        self.use_trim_policy()
+        self.at("brain-dump")
+        out = self.g.trim_tools(request=self.anthropic_request())
+        # capture = read_file, search_files, clarify, tts; all sent directly, so no Tool Search
+        self.assertEqual(self.names(out), ["read_file", "search_files", "text_to_speech", "clarify"])
+        self.assertEqual(out["request"]["tools"][-1]["cache_control"], {"type": "ephemeral"})
+        self.assertIn("#brain-dump", out["reason"])
+
+    def test_log_channel_sends_no_tools(self):
+        self.use_trim_policy()
+        self.at("build-status")
+        out = self.g.trim_tools(request=self.anthropic_request())
+        self.assertNotIn("tools", out["request"])
+        self.assertNotIn("tool_choice", out["request"])
+
+    def test_no_tools_but_history_has_tool_calls_leaves_request(self):
+        self.use_trim_policy()
+        self.at("build-status")
+        req = self.anthropic_request()
+        req["messages"].append({"role": "assistant", "content": [{"type": "tool_use", "name": "x"}]})
+        self.assertIsNone(self.g.trim_tools(request=req))
+
+    def test_code_channel_keeps_tool_search_for_claude_code(self):
+        self.use_trim_policy()
+        self.at("code-assist")
+        req = self.anthropic_request()
+        req["tools"][:0] = [{"name": "discord_admin", "input_schema": {}},
+                            {"name": "browser_exec", "input_schema": {}}]
+        names = self.names(self.g.trim_tools(request=req))
+        self.assertNotIn("browser_exec", names)
+        self.assertIn("tool_call", names)       # claude_code is reached through tool_call
+        self.assertIn("terminal", names)
+        self.assertNotIn("discord_admin", names)
+
+    def test_dm_unlimited_untouched(self):
+        self.use_trim_policy()
+        self.env = {"HERMES_SESSION_PLATFORM": "discord", "HERMES_SESSION_CHAT_TYPE": "dm"}
+        self.assertIsNone(self.g.trim_tools(request=self.anthropic_request()))
+
+    def test_deny_everywhere_removed_even_in_dm(self):
+        self.use_trim_policy()
+        self.env = {"HERMES_SESSION_PLATFORM": "discord", "HERMES_SESSION_CHAT_TYPE": "dm"}
+        req = self.anthropic_request()
+        req["tools"].insert(0, {"name": "discord_admin", "input_schema": {}})
+        self.assertNotIn("discord_admin", self.names(self.g.trim_tools(request=req)))
+
+    def test_unknown_context_untouched(self):
+        self.use_trim_policy()
+        self.env = {}
+        self.assertIsNone(self.g.trim_tools(request=self.anthropic_request()))
+
+    def test_openai_shape(self):
+        self.use_trim_policy()
+        self.at("vault-queries")
+        req = {"messages": [], "tools": [{"type": "function", "function": {"name": n}} for n in self.DIRECT]}
+        names = self.names(self.g.trim_tools(request=req))
+        # vault = read_file, search_files, write_file, clarify, tts, session_search (not sent → Tool Search)
+        self.assertEqual(names, ["read_file", "search_files", "write_file", "text_to_speech", "clarify",
+                                 "tool_search", "tool_describe", "tool_call"])
+
+    def test_tool_choice_naming_removed_tool_falls_back_to_auto(self):
+        self.use_trim_policy()
+        self.at("brain-dump")
+        req = self.anthropic_request()
+        req["tool_choice"] = {"type": "tool", "name": "terminal"}
+        self.assertEqual(self.g.trim_tools(request=req)["request"]["tool_choice"], {"type": "auto"})
+
     def test_prompt_lines(self):
         self.use_real_policy()
         self.assertIn("no tools are available", self.g.policy.prompt_line("#announcements"))

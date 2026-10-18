@@ -307,6 +307,8 @@ def register(ctx) -> None:
     guard.configure(_load_config())
     ctx.register_hook("pre_tool_call", guard.pre_tool_call)
     ctx.register_hook("post_tool_call", guard.post_tool_call)
+    # Same channel limits, applied to the request: blocked tools aren't sent (saves tokens).
+    ctx.register_middleware("llm_request", guard.trim_tools)
     ctx.register_tool(
         name="report_security_event", toolset="proxai_security", schema=REPORT_SCHEMA,
         handler=guard.report_tool, emoji="🚨",
