@@ -369,6 +369,10 @@ prefill_messages_file: ''
 goals:
   max_turns: 20
 skills:
+  # Phase 9 (Nathan, 10-18): the bundled google-workspace skill wants full Gmail/Drive/Calendar;
+  # calendar goes through the narrow proxai-calendar plugin instead.
+  disabled:
+    - google-workspace
   external_dirs: []
   template_vars: true
   inline_shell: false

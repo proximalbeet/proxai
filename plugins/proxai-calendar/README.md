@@ -44,22 +44,26 @@ the file. Separating them needs the gateway sandboxing from Phase 6 ("desktop ac
 4. Permission test: `python3 ~/.hermes/profiles/proxai/plugins/proxai-calendar/setup_calendar.py --selftest`
    → create / move / list / delete PASS, **write to main calendar refused**, **read main calendar refused**
 5. Hermes: `hermes -p proxai plugins enable proxai-calendar`, add `proxai_calendar` to
-   `platform_toolsets` → `discord` and `cli` in `config.yaml`, add `calendar` to the `tool_policy`
-   profiles that may schedule (decision below), then `systemctl --user restart hermes-gateway-proxai`
+   `platform_toolsets` → `discord` and `cli` in `config.yaml`, then
+   `systemctl --user restart hermes-gateway-proxai`. (Channel limits and the `google-workspace`
+   disable are already in this branch, see below.) Left out of the branch on purpose so Hermes
+   doesn't see a calendar tool before step 3 is done
 6. From Discord: "put a 30-minute study block on my calendar tomorrow at 3" → event in the ProxAI
    calendar, 📅 line in #bot-audit-log; "move it to 4" → moved; "delete it" → a code, nothing
    deleted until `/calendar-confirm <code>`
 
-## Decisions (Nathan)
+## Decisions (Nathan, 2026-10-18)
 
-1. **Which channels can schedule.** Suggested start: DMs (no limits) and the `chat` profile
-   (#general-chat, Sonnet). #daily-goals / #focus-sessions are tier1 (qwen, weak at tools: 1/3 in
-   Phase 3) with plugin-written captures; scheduling there is better done later by the capture
-   plugin (e.g. "focus session 3–4pm" → event) than by qwen calling the tool
+1. **Channels that can schedule: DMs, #general-chat, #daily-goals.** In this branch's
+   `routing.json`: `calendar` added to the `chat` profile (#general-chat; also the only channel on
+   it), and #daily-goals moved to a new `capture_calendar` profile (capture tools + `calendar`) so
+   #brain-dump and #focus-sessions stay without it. Both channel prompts say when to use it. DMs
+   have no channel limits. Checked with the guard: allowed in DMs/#general-chat/#daily-goals,
+   blocked elsewhere; 35 discord-routing tests pass. Note: #daily-goals runs on qwen (tool calls
+   1/3 in Phase 3), so watch the first few; the plugin still saves the goal itself either way
 2. **Busy times** (`calendar.freebusy`): on by default; `--no-freebusy` at setup turns it off
-3. **Disable the bundled `google-workspace` skill in proxai.** It asks for full Calendar, Gmail
-   (read/send), Drive, Docs and Sheets. Unused today (no token, 0 calls in `agent.log`), but a model
-   could still walk you through its setup and get far broader access than this plugin
+3. **`google-workspace` skill disabled in proxai** (`skills.disabled` in this branch's
+   `config.yaml`). It asked for full Calendar, Gmail (read/send), Drive, Docs and Sheets
 
 ## Tests
 
