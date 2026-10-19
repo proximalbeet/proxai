@@ -80,8 +80,10 @@ terminal:
     - /home/prox/.local/share/proxai/empty:/workspace/vault/07-Security:ro
     - /home/prox/.local/share/proxai/empty:/workspace/vault/.git:ro
     - /home/prox/.local/share/proxai/empty:/workspace/vault/.obsidian:ro
-    # Phase 7: Hermes's own workspace, the only rw folder outside its profile and the vault.
+    # Phase 7: Hermes's own workspace (rw). With /output below, the only rw folders outside the vault.
     - /home/prox/dev/proxai:/workspace/proxai:rw
+    # Outbox: files Hermes makes for Nathan (MEDIA:/output/<file> sends them on Discord).
+    - /home/prox/.local/share/proxai/outbox:/output:rw
     - /home/prox/.hermes/profiles/proxai/egress/ca.crt:/etc/proxai/egress-ca.crt:ro
     - /home/prox/.hermes/profiles/proxai/egress/cc-token:/run/proxai/cc-token:ro
   docker_mount_cwd_to_workspace: false

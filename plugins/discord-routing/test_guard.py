@@ -55,6 +55,28 @@ class GuardTest(unittest.TestCase):
         self.assertIsNone(r)
         self.assertIn("**TOOL** · #build-status · write_file", self.log_text())
 
+    def test_uploaded_files_readable_in_sandbox(self):
+        # Files Nathan sends land in /root/.hermes/cache/... inside the sandbox (read-only mounts).
+        for args in ({"path": "/root/.hermes/cache/documents/doc_5062ef920fab_Report.pdf"},
+                     {"command": "pdftotext /root/.hermes/cache/documents/doc_x_a.pdf - | head"},
+                     {"path": "/root/.hermes/cache/audio/voice.ogg"},
+                     {"path": "/root/.hermes/attachments/photo.png"},
+                     {"path": "/root/.hermes/cache/documents/a..b.pdf"}):
+            self.assertIsNone(self.g.pre_tool_call(tool_name="read_file", args=args), args)
+
+    def test_rest_of_hermes_still_blocked(self):
+        for args in ({"path": "/root/.hermes/.env"},
+                     {"path": "/root/.hermes/sessions/x.json"},
+                     {"path": "/root/.hermes/cache"},
+                     {"path": "/root/.hermes/cache/documentsX/a"},
+                     {"path": "~/.hermes/cache/documents/a.pdf"},
+                     {"path": "/root/.hermes/cache/documents/../../.env"},
+                     {"command": "cd /root/.hermes/cache/documents && cat ../../auth.json"},
+                     {"command": "cat /root/.hermes/cache/documents/a.pdf ~/.hermes/auth.json"},
+                     {"path": "/home/prox/.hermes/profiles/proxai/cache/documents/a.pdf"}):
+            r = self.g.pre_tool_call(tool_name="read_file", args=args)
+            self.assertEqual(r and r["action"], "block", args)
+
     def test_gitignore_not_mistaken_for_git(self):
         self.assertIsNone(self.g.pre_tool_call(tool_name="read_file",
                                                args={"path": "/workspace/vault/.gitignore"}))
@@ -251,3 +273,22 @@ class GuardTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FilesHintTest(unittest.TestCase):
+    def setUp(self):
+        load_plugin()
+        self.hook = sys.modules["dr_test_pkg"]._on_pre_llm_call
+
+    def test_hint_on_uploads_and_file_requests(self):
+        for msg in ("[The user sent a document: 'Report.pdf'. It is saved at: "
+                    "/root/.hermes/cache/documents/doc_x_Report.pdf.",
+                    "can you send me that as a file", "export the table to csv",
+                    "Summarize the PDF I attached"):
+            r = self.hook(user_message=msg)
+            self.assertIn("/output/", r["context"], msg)
+            self.assertIn("MEDIA:/output/", r["context"])
+
+    def test_no_hint_on_ordinary_messages(self):
+        for msg in ("what's on my calendar tomorrow", "profile the gym plan", "hey"):
+            self.assertIsNone(self.hook(user_message=msg), msg)

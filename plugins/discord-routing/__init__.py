@@ -11,6 +11,7 @@ Runs on ``pre_gateway_dispatch`` so no Hermes core files are modified:
   * adds the vault privacy rule to the channel prompt for cloud tiers
   * saves captures in the ``routing.json`` ``captures`` channels itself
     (see captures.py), so the model only writes the reply
+  * ``pre_llm_call``: on file-related messages, says where uploads are and how to send files back
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -329,6 +331,28 @@ async def _on_pre_gateway_dispatch(event=None, gateway=None, **_kwargs):
     return None
 
 
+# Files Nathan sends are read-only in /root/.hermes/cache/... inside the sandbox (the guard allows
+# those folders); files for him go in /output, mounted from ~/.local/share/proxai/outbox.
+_FILE_WORDS = re.compile(
+    r"\[The user sent (?:a|an) |/root/\.hermes/(?:cache|attachments)/|\b(?:file|files|attach\w*|pdf|"
+    r"docx?|csv|xlsx|pptx|spreadsheet|download|export|upload\w*|send (?:me|it|that|back)|"
+    r"zip)\b", re.I)
+_FILES_HINT = (
+    "[files] Files Nathan sends are saved read-only under /root/.hermes/cache/ (documents, images, "
+    "audio) in your sandbox: open them with read_file at the exact path given (PDF, Word and "
+    "Excel are turned into text for you). To send Nathan a file, save it in /output/ (for "
+    "example /output/summary.md) and put MEDIA:/output/summary.md on its own line in your reply. "
+    "Files saved anywhere else can't be sent.")
+
+
+def _on_pre_llm_call(user_message=None, **_kwargs):
+    """Point the model at the upload folders and /output, only when the message is about files."""
+    text = user_message if isinstance(user_message, str) else json.dumps(user_message or "")[:4000]
+    if not _FILE_WORDS.search(text or ""):
+        return None
+    return {"context": _FILES_HINT}
+
+
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
     # Tool guard: protected paths blocked, every call logged to the write-only security log.
@@ -337,6 +361,7 @@ def register(ctx) -> None:
     ctx.register_hook("post_tool_call", guard.post_tool_call)
     # Same channel limits, applied to the request: blocked tools aren't sent (saves tokens).
     ctx.register_middleware("llm_request", guard.trim_tools)
+    ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_tool(
         name="report_security_event", toolset="proxai_security", schema=REPORT_SCHEMA,
         handler=guard.report_tool, emoji="🚨",

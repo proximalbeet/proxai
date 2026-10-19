@@ -40,6 +40,14 @@ PROTECTED = [
     (re.compile(r"/home/prox(?:/|\b)"), "host home folder"),
     (re.compile(r"\.hermes(?:/|\b)"), "~/.hermes (keys, sessions)"),
 ]
+HERMES_LABEL = "~/.hermes (keys, sessions)"
+# Inside the sandbox, /root/.hermes holds only these folders, bind-mounted read-only from the
+# profile: files Nathan uploads, voice notes, images, skills. No keys or sessions. The .hermes
+# rule skips paths into them, unless the text has a ".." segment (no climbing back out).
+SHARED_SANDBOX_PATH = re.compile(
+    r"/root/\.hermes/(?:cache/(?:documents|images|audio|videos|screenshots|web|delegation"
+    r"|spillover|generated)|attachments|images|composer-pastes|skills)(?=$|[/\s'\"])")
+PARENT_DIR = re.compile(r"(?:^|[/\s'\"])\.\.(?:$|[/\s'\"])")
 # Argument keys that hold note or message text rather than paths or commands.
 TEXT_KEYS = {"content", "new_string", "old_string", "text", "message", "summary", "details",
              "prompt", "query", "goal", "context", "description"}
@@ -99,7 +107,10 @@ def _strings(value: Any, key: str = "") -> list[str]:
 def protected_hit(args: Any) -> Optional[str]:
     for s in _strings(args):
         for pattern, label in PROTECTED:
-            if pattern.search(s):
+            # Shared upload folders are cut out first, so only the .hermes rule lets them through.
+            shared_ok = label == HERMES_LABEL and not PARENT_DIR.search(s)
+            target = SHARED_SANDBOX_PATH.sub("/shared", s) if shared_ok else s
+            if pattern.search(target):
                 return label
     return None
 
