@@ -129,9 +129,15 @@ class TestConfirm(Base):
         self.assertEqual(plugin._pending, {})
 
     def test_already_in_mode(self):
+        plugin.pm.read_state = lambda: {"mode": "personal", "ok": True}
         r = self.tool(action="request", mode="personal")
         self.assertTrue(r["already"])
         self.assertEqual(plugin._pending, {})
+
+    def test_retry_allowed_after_failed_switch(self):
+        plugin.pm.read_state = lambda: {"mode": "personal", "ok": False}
+        r = self.tool(action="request", mode="personal")
+        self.assertTrue(r["needs_confirmation"])
 
     def test_cancel(self):
         self.tool(action="request", mode="server")

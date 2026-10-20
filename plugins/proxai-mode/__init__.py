@@ -248,9 +248,10 @@ def _handle(args: dict, **_kwargs) -> str:
             return json.dumps({"ok": False, "error": f"mode must be one of {_mode_names()}"})
         if not sid:
             return json.dumps({"ok": False, "error": "no session id; can't track the confirmation"})
-        if pm.current_mode() == mode:
+        if pm.current_mode() == mode and pm.read_state().get("ok", True):
             return json.dumps({"ok": True, "already": True, "mode": mode,
                                "tell_nathan": f"Already in {mode} mode."})
+        # (same mode but the last switch had failed steps: a retry is allowed)
         check = pm.preflight(mode, pm.load_config())
         if not check["ok"]:
             pm._log({"ok": False, "refused": True, "target": mode, "by": f"hermes:{_who()}@{where}",
