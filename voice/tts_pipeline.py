@@ -79,7 +79,14 @@ def free_ollama_vram(wait_seconds: float = 10) -> None:
 
 
 def split_into_chunks(text: str) -> list[str]:
-    """Split text at sentence ends, then pack sentences into chunks under MAX_CHUNK_CHARS."""
+    """Clean the text for speech (spoken_text.py: "Ye" -> "Yay", numbers -> words, no emojis),
+    then split at sentence ends and pack sentences into chunks under MAX_CHUNK_CHARS.
+    The phone voice server (ProxMobile) calls this too, so both voices get the same cleanup."""
+    try:
+        from spoken_text import speakable
+        text = speakable(text)
+    except Exception as exc:  # a cleanup bug must never cost the voice reply
+        print(f"warning: spoken_text cleanup failed: {exc}", file=sys.stderr)
     sentences = re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
     chunks: list[str] = []
     current = ""
