@@ -49,13 +49,17 @@ Every switch (and refusal) goes to `~/.local/state/proxai/mode.log` and #bot-aud
 ## Go-live (Nathan)
 
 1. `git -C ~/.hermes/profiles/proxai merge worktree-phase10-modes`
-2. `bash ~/.hermes/profiles/proxai/mode/install.sh` (PATH link + reapply service)
+2. `bash ~/.hermes/profiles/proxai/mode/install.sh` (puts `proxai-mode` on your PATH)
 3. RGB: `sudo pacman -S openrgb` (installs its udev rules; replug or reboot once), open OpenRGB,
    check it sees the Aura board, Corsair Lighting Node Pro + Commander CORE, Razer mouse, HyperX
    keyboard. Set your colors and **Profile → Save as `personal`**. Optional: save `off` too
    (otherwise "off" = all lights black). The OMEN monitor light probably isn't supported.
 4. `systemctl --user restart hermes-gateway-proxai`
 5. Try: `proxai-mode check server`, `proxai-mode set personal`, then from a DM "switch to server mode".
+6. **Once both modes work:** `bash ~/.hermes/profiles/proxai/mode/install.sh --boot`. After every
+   restart the PC comes back in the mode it was in (lights, sleep block, Ollama model, voice), about
+   20 s after boot, even before you log in. The screen lock and display-off steps don't re-run (the
+   login screen covers that).
 
 ## The server-mode model: `qwen3.5:35b-a3b` (picked 2026-10-19)
 

@@ -566,6 +566,8 @@ def main(argv: list[str] = None) -> int:
             else:
                 print(f"Mode: {st.get('mode', 'unknown').upper()}"
                       + (f" since {st['since']} (by {st.get('by', '?')})" if st.get("since") else ""))
+                if st.get("reapplied"):
+                    print(f"   re-applied after restart at {st['reapplied']}")
                 bad = [x for x in st.get("steps", []) if not x["ok"]]
                 for x in bad:
                     print(f"   ✗ {x['step']}: {x['detail']}")
