@@ -118,7 +118,7 @@ class TestServer(Base):
         self.assertIn("--what=sleep:idle:handle-suspend-key", cmds)
         self.assertIn("loginctl lock-session 8", cmds)
         self.assertIn("kscreen-doctor --dpms off", cmds)
-        self.assertIn("openrgb --noautoconnect --mode static --color 000000", cmds)
+        self.assertIn("openrgb --mode direct --color 000000", cmds)   # Direct: every device supports it
         dropin = run.files[str(pm.SYSTEMD_USER_DIR / "ollama.service.d" / pm.DROPIN_NAME)]
         self.assertIn("OLLAMA_KEEP_ALIVE=-1", dropin)
         self.assertIn(f"OLLAMA_GPU_OVERHEAD={4096 * 1024 * 1024}", dropin)   # room for the voice
@@ -205,16 +205,26 @@ class TestPersonal(Base):
         r, _ = self.switch("personal")
         rgb = [s for s in r["steps"] if s["step"] == "rgb"][0]
         self.assertTrue(rgb["skipped"] and rgb["ok"])
-        self.assertIn("personal.orp", rgb["detail"])
+        self.assertIn("no OpenRGB profile named 'default'", rgb["detail"])
 
     def test_saved_rgb_profile_is_loaded(self):
-        (TMP / "openrgb").mkdir(exist_ok=True)
-        (TMP / "openrgb" / "personal.orp").write_text("x")
+        # OpenRGB 1.x: profiles/<name>.json
+        (TMP / "openrgb" / "profiles").mkdir(parents=True, exist_ok=True)
+        (TMP / "openrgb" / "profiles" / "default.json").write_text("{}")
         try:
             _, run = self.switch("personal")
-            self.assertIn("openrgb --noautoconnect --profile personal", "\n".join(run.cmds))
+            self.assertIn("openrgb --profile default", "\n".join(run.cmds))
         finally:
-            (TMP / "openrgb" / "personal.orp").unlink()
+            (TMP / "openrgb" / "profiles" / "default.json").unlink()
+
+    def test_old_style_orp_profile_also_found(self):
+        (TMP / "openrgb").mkdir(exist_ok=True)
+        (TMP / "openrgb" / "default.orp").write_text("x")
+        try:
+            _, run = self.switch("personal")
+            self.assertIn("openrgb --profile default", "\n".join(run.cmds))
+        finally:
+            (TMP / "openrgb" / "default.orp").unlink()
 
     def test_reapply_skips_lock_and_display(self):
         self.switch("server")

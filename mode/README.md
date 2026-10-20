@@ -50,10 +50,13 @@ Every switch (and refusal) goes to `~/.local/state/proxai/mode.log` and #bot-aud
 
 1. `git -C ~/.hermes/profiles/proxai merge worktree-phase10-modes`
 2. `bash ~/.hermes/profiles/proxai/mode/install.sh` (puts `proxai-mode` on your PATH)
-3. RGB: `sudo pacman -S openrgb` (installs its udev rules; replug or reboot once), open OpenRGB,
-   check it sees the Aura board, Corsair Lighting Node Pro + Commander CORE, Razer mouse, HyperX
-   keyboard. Set your colors and **Profile → Save as `personal`**. Optional: save `off` too
-   (otherwise "off" = all lights black). The OMEN monitor light probably isn't supported.
+3. RGB (OpenRGB 1.1 installed 10-20; it sees both RAM sticks, the HyperX keyboard, Lighting Node
+   Pro, Commander Core, the ASUS board and the Razer mouse). In the OpenRGB window, set your colors,
+   then **Save Profile as `default`** (personal mode loads it). No "off" profile needed: server mode
+   sets every device to black in Direct mode (the RAM, keyboard and Commander Core have no Static mode).
+   Recommended: OpenRGB Settings → start at login, minimized, with the SDK server on. Then the switch
+   goes through OpenRGB instead of fighting it for the devices, and devices that only do Direct mode
+   keep their colors. The OMEN monitor light isn't detected.
 4. `systemctl --user restart hermes-gateway-proxai`
 5. Try: `proxai-mode check server`, `proxai-mode set personal`, then from a DM "switch to server mode".
 6. **Once both modes work:** `bash ~/.hermes/profiles/proxai/mode/install.sh --boot`. After every

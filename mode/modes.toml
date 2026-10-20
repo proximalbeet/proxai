@@ -65,7 +65,7 @@ description = "Away from the desk: ProxAI gets the machine. No sleep, screen loc
 
   [[server.steps]]
   type = "rgb"
-  profile = "off"
+  profile = "off"                # all lights black (Direct mode); no OpenRGB profile needed
 
   [[server.steps]]
   type = "lock_screen"
@@ -103,4 +103,4 @@ description = "At the desk: the GPU is yours. Local AI unloads after use, Hermes
 
   [[personal.steps]]
   type = "rgb"
-  profile = "personal"           # save a profile named "personal" in OpenRGB; more named profiles later
+  profile = "default"            # OpenRGB profile named "default" (Nathan 10-20); more named profiles later

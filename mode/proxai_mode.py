@@ -413,17 +413,26 @@ def step_display(runner: Runner, step: dict) -> StepResult:
     return StepResult("display", rc == 0, f"display {state}" + (f": {out}" if rc else ""))
 
 
+def _rgb_profile_exists(name: str) -> bool:
+    # OpenRGB 1.x keeps profiles in profiles/<name>.json; older versions used <name>.orp
+    return (OPENRGB_DIR / "profiles" / f"{name}.json").exists() or (OPENRGB_DIR / f"{name}.orp").exists()
+
+
 def step_rgb(runner: Runner, step: dict) -> StepResult:
+    """Load an OpenRGB profile, or "off" = every light black. No --noautoconnect: if the OpenRGB
+    window/SDK server is running, the command goes through it (it keeps devices in Direct mode);
+    otherwise the command talks to the devices itself."""
     profile = str(step.get("profile", "")).strip()
     if not shutil.which("openrgb") and not runner.dry_run:
         return StepResult("rgb", True, "OpenRGB not installed (sudo pacman -S openrgb)", skipped=True)
-    if (OPENRGB_DIR / f"{profile}.orp").exists() or runner.dry_run and profile != "off":
-        argv = ["openrgb", "--noautoconnect", "--profile", profile]
+    if _rgb_profile_exists(profile) or runner.dry_run and profile != "off":
+        argv = ["openrgb", "--profile", profile]
     elif profile == "off":
-        argv = ["openrgb", "--noautoconnect", "--mode", "static", "--color", "000000"]
+        # Direct is the one mode all of Nathan's devices support (RAM, HyperX, Commander Core have no Static)
+        argv = ["openrgb", "--mode", "direct", "--color", "000000"]
     else:
         return StepResult("rgb", True, f"no OpenRGB profile named '{profile}' yet "
-                          f"(save one in OpenRGB as {OPENRGB_DIR}/{profile}.orp)", skipped=True)
+                          "(OpenRGB window → Profiles → Save Profile with that name)", skipped=True)
     rc, out = runner.run(argv, timeout=60)
     return StepResult("rgb", rc == 0, f"lights: {profile}" + (f": {out[-200:]}" if rc else ""))
 
