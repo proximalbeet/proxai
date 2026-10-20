@@ -1,0 +1,9 @@
+name: proxai-mode
+version: "1.0.0"
+description: "Phase 10: StormTrooper server/personal mode. Tool proxai_mode (status/check/request/confirm/cancel); switches only from Nathan's DMs or the phone app, after his next message is a yes (checked by a pre_llm_call hook, not the model). Steps come from mode/modes.toml; runs via systemd-run; logged and posted to #bot-audit-log."
+author: "prox"
+provides_tools:
+  - proxai_mode
+provides_hooks:
+  - pre_gateway_dispatch
+  - pre_llm_call

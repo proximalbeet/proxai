@@ -94,6 +94,72 @@ def split_into_chunks(text: str) -> list[str]:
     return chunks
 
 
+# Phase 10 server/personal mode (mode/proxai_mode.py writes this file on every switch).
+MODE_FILE = Path(os.getenv("PROXAI_STATE_DIR", "~/.local/state/proxai")).expanduser() / "mode.json"
+# The warm Kanye voice server (ProxMobile, systemd socket on this port) and its API key.
+VOICE_SERVER_URL = os.getenv("PROXAI_VOICE_URL", "http://127.0.0.1:8653")
+ENV_FILE = Path(os.getenv("PROXAI_ENV_FILE", "~/.hermes/profiles/proxai/.env")).expanduser()
+VOICE_SERVER_MAX_CHARS = 1100   # the server takes up to 1200 per request
+
+
+def mode_voice_settings() -> dict:
+    """{'voice': bool, 'voice_warm': bool} for the current mode, {} when no mode is set."""
+    try:
+        return json.loads(MODE_FILE.read_text()).get("hermes") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _api_key() -> str:
+    try:
+        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            if line.startswith("API_SERVER_KEY="):
+                v = line.split("=", 1)[1].strip()
+                if v[:1] in "\"'" and v[-1:] == v[:1]:
+                    return v[1:-1]
+                return re.split(r"\s+#", v, maxsplit=1)[0].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def speak_via_voice_server(text: str, voice_name: str, out_path: str) -> bool:
+    """Server mode: the voice model is already loaded in the voice server, so ask it (about 1 s a
+    sentence) instead of loading Chatterbox here (~9 s) and unloading Ollama. False on any failure,
+    and the caller falls back to speaking locally."""
+    key = _api_key()
+    if not key:
+        return False
+    pieces, current = [], ""
+    for sentence in re.split(r"(?<=[.!?])\s+", " ".join(text.split())):
+        if current and len(current) + len(sentence) + 1 > VOICE_SERVER_MAX_CHARS:
+            pieces.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        pieces.append(current)
+    if not pieces or any(len(p) > 1200 for p in pieces):
+        return False
+    try:
+        import io
+        import numpy as np
+        import soundfile as sf
+        audio, rate = [], None
+        for piece in pieces:
+            req = urllib.request.Request(
+                f"{VOICE_SERVER_URL}/v1/tts", data=json.dumps({"text": piece, "voice": voice_name}).encode(),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data, rate = sf.read(io.BytesIO(resp.read()), dtype="float32")
+            audio += [data, np.zeros(int(GAP_SECONDS * rate), dtype=np.float32)]
+        sf.write(out_path, np.concatenate(audio[:-1]), rate)
+        return True
+    except Exception as exc:
+        print(f"warning: voice server failed, speaking locally: {exc}", file=sys.stderr)
+        return False
+
+
 def main() -> None:
     # Hermes passes a text file containing what the bot wants to say, plus the
     # path where it expects the finished .wav.
@@ -102,6 +168,12 @@ def main() -> None:
     text = Path(in_path).read_text(encoding="utf-8").strip()
     if not text:
         sys.exit("empty input text")
+    mode = mode_voice_settings()
+    if mode.get("voice") is False:
+        # Personal mode: text-only, keep the GPU free. Hermes still sends the text reply.
+        sys.exit("voice replies are off in personal mode (text-only)")
+    if mode.get("voice_warm") and speak_via_voice_server(text, voice_name, out_path):
+        return
     reference = VOICE_DIR / "reference" / f"{voice_name}.wav"
     if not reference.exists():
         sys.exit(f"no reference clip at {reference}")
@@ -112,7 +184,9 @@ def main() -> None:
     from chatterbox.tts import ChatterboxTTS
 
     # Make room on the GPU first, or Chatterbox runs out of memory while qwen is loaded.
-    free_ollama_vram()
+    # Not in server mode: there the local model is sized to fit next to the voice model.
+    if not mode.get("voice_warm"):
+        free_ollama_vram()
 
     # Loads the model on the GPU. The first run downloads it (about 3 GB) into
     # ~/.cache/huggingface, later runs load it from there.

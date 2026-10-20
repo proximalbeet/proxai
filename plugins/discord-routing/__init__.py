@@ -80,9 +80,25 @@ def _resolve(entry: dict, tier_name: str = "") -> dict:
     }
 
 
+_MODE_FILE = Path(os.getenv("PROXAI_STATE_DIR", "~/.local/state/proxai")).expanduser() / "mode.json"
+
+
+def _mode_tier_overrides() -> dict:
+    """Phase 10: tier changes for the current server/personal mode, e.g. a bigger tier1 model in
+    server mode ({"tier1": {"model": ..., "label": ...}}). Read on every message, so a mode switch
+    applies to the next message with no restart. {} when no mode is set."""
+    try:
+        hermes = json.loads(_MODE_FILE.read_text()).get("hermes") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {k: v for k, v in hermes.items() if k.startswith("tier") and isinstance(v, dict)}
+
+
 def _routing_for(channel_name: str, config: dict) -> dict:
     tier_name = config.get("channels", {}).get(channel_name) or config.get("default_tier", "")
     tier = config.get("tiers", {}).get(tier_name)
+    if tier and tier_name in (overrides := _mode_tier_overrides()):
+        tier = {**tier, **overrides[tier_name]}
     return _resolve(tier, tier_name) if tier else {}
 
 

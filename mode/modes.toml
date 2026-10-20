@@ -1,0 +1,105 @@
+# Phase 10: what SERVER and PERSONAL mode change on StormTrooper.
+#
+# Edit this file to add or remove changes; the next switch uses it (no restart needed).
+# Hermes can only pick a mode by name. The steps themselves only come from this file.
+#
+# Step types (run in order):
+#   stop_units / start_units   systemd --user units
+#   ollama                     keep_alive, unload all, preload models (restarts Ollama if settings changed)
+#   voice_server               the phone/Discord Kanye voice server: on/off, stay loaded or not
+#   sleep_block                true = hold a sleep/idle block for as long as the mode is on
+#   lock_screen                lock the desktop session
+#   display                    "off" / "on"
+#   rgb                        OpenRGB profile name ("off" = all lights black). Skipped if OpenRGB isn't installed
+#   command                    any argv you add yourself, e.g. { type = "command", argv = ["notify-send", "hi"] }
+# Add `reapply = false` to a step that shouldn't run again at login (lock_screen, display do this by default).
+
+[server]
+description = "Away from the desk: ProxAI gets the machine. No sleep, screen locked, lights off, AI kept warm, bigger local model."
+
+  # Refuse to switch when the machine is already doing something heavy (a game, a render...).
+  # `proxai-mode check server` shows the current readings.
+  [server.preflight]
+  sample_seconds = 3
+  gpu_util_max_pct = 60          # average GPU use
+  gpu_power_max_w = 150          # average GPU power draw (5070 Ti idles ~25 W)
+  cpu_busy_max_pct = 60          # average CPU use across all cores
+  foreign_vram_max_mib = 1500    # VRAM used by one process that isn't ours/desktop
+  # Processes that never count as "busy" (ours, desktop, browsers, chat).
+  ignore_processes = ["ollama", "verity-voice", "kanye_voice_server", "venv-chatterbox", "kwin",
+                      "Xwayland", "plasmashell", "brave", "chrome", "firefox", "Discord", "spotify"]
+  # A running process whose command line contains one of these blocks the switch.
+  block_cmdline = ["SteamLaunch", "proton", "wineserver", "gamescope", "obs", "blender",
+                   "kdenlive", "resolve", "HandBrake"]
+
+  [server.hermes]
+  voice = true                   # voice replies on
+  voice_warm = true              # Discord voice replies use the warm voice server, Ollama isn't unloaded first
+  # tier1 channels use this local model while in server mode (routing.json tiers.tier1 otherwise).
+  # OPEN DECISION (Nathan): qwen3.5:9b is a placeholder until the heavier model is picked and pulled.
+  # Candidates that fit the 16 GB 5070 Ti next to the 3.4 GB voice model: see mode/README.md.
+  tier1 = { model = "qwen3.5:9b", label = "Ollama / qwen3.5:9b (server mode)" }
+
+  [[server.steps]]
+  type = "stop_units"
+  units = ["verity-relay.service", "verity-gru-tts.service", "verity-whisper-stt.service"]
+  note = "Verity Minecraft voice only runs when the mod is on"
+
+  [[server.steps]]
+  type = "ollama"
+  keep_alive = "-1"              # never unload
+  max_loaded_models = 1          # the big model only, no surprise second model filling VRAM
+  unload_all = true              # drop whatever is loaded, then preload below
+  preload = ["qwen3.5:9b"]       # keep in sync with [server.hermes].tier1.model
+
+  [[server.steps]]
+  type = "voice_server"
+  enabled = true
+  idle_seconds = 31536000        # stay loaded (1 year)
+  warm = true                    # load the voice model now
+
+  [[server.steps]]
+  type = "sleep_block"
+  on = true
+
+  [[server.steps]]
+  type = "rgb"
+  profile = "off"
+
+  [[server.steps]]
+  type = "lock_screen"
+
+  [[server.steps]]
+  type = "display"
+  state = "off"
+
+
+[personal]
+description = "At the desk: the GPU is yours. Local AI unloads after use, Hermes is text-only, normal desktop, lights on."
+
+  [personal.hermes]
+  voice = false                  # text-only: no Chatterbox on the GPU (voice notes still transcribe on CPU)
+  voice_warm = false
+
+  [[personal.steps]]
+  type = "ollama"
+  keep_alive = "2m"              # unload qwen 2 min after the last tier1 reply
+  max_loaded_models = 1
+  unload_all = true
+  preload = []
+
+  [[personal.steps]]
+  type = "voice_server"
+  enabled = false                # phone falls back to its own voice; Discord replies are text
+
+  [[personal.steps]]
+  type = "sleep_block"
+  on = false
+
+  [[personal.steps]]
+  type = "display"
+  state = "on"
+
+  [[personal.steps]]
+  type = "rgb"
+  profile = "personal"           # save a profile named "personal" in OpenRGB; more named profiles later

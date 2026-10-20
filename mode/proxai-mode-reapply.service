@@ -1,0 +1,16 @@
+[Unit]
+Description=ProxAI: re-apply the server/personal mode after boot (Phase 10)
+Documentation=file://%h/.hermes/profiles/proxai/mode/README.md
+After=ollama.service
+Wants=ollama.service
+
+[Service]
+Type=oneshot
+# Lights reset and the sleep block is gone after a reboot; this puts the last mode back.
+# Lock screen / display steps don't re-run (reapply = false by default).
+ExecStartPre=/usr/bin/sleep 20
+ExecStart=/usr/bin/python3 %h/.hermes/profiles/proxai/mode/proxai_mode.py reapply
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

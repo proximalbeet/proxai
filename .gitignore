@@ -57,3 +57,11 @@ __pycache__/
 !plugins/hermes-session-reset-policy/
 !plugins/hermes-session-reset-policy/**
 __pycache__/
+
+# Phase 10 server/personal mode: switch engine, modes.toml, plugin (state lives in ~/.local/state/proxai)
+!mode/
+!mode/**
+!plugins/proxai-mode/
+!plugins/proxai-mode/**
+!voice/test_tts_mode.py
+__pycache__/
