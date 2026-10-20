@@ -111,9 +111,14 @@ def openrgb_profiles() -> list[str]:
     return names
 
 
-def openrgb_load(name: str) -> None:
+def openrgb_load(name: str, settle: float = 1.0) -> None:
+    """Load a saved profile on the server. The name goes WITHOUT a trailing NUL: OpenRGB 1.1
+    compares names exactly, and "default\\0" silently matched nothing (live test 10-20: 0/7
+    devices changed; without the NUL and with a pause before closing: 6/7). The server sends no
+    reply to this request, so stay connected briefly before closing."""
     with _orgb_connect() as sock:
-        _orgb_send(sock, ORGB_LOAD_PROFILE, name.encode() + b"\0")
+        _orgb_send(sock, ORGB_LOAD_PROFILE, name.encode())
+        time.sleep(settle)
 
 
 # ---- running commands (swapped for a fake in tests) -------------------------------------------

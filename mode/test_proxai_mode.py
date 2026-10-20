@@ -255,6 +255,27 @@ class TestPersonal(Base):
         self.assertIn("reapplied", r)
 
 
+class TestOpenRGBLoad(unittest.TestCase):
+    def test_profile_name_sent_without_nul(self):
+        sent = []
+
+        class FakeSock:
+            def sendall(self, b): sent.append(b)
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+
+        orig = pm._orgb_connect
+        pm._orgb_connect = lambda: FakeSock()
+        try:
+            pm.openrgb_load("default", settle=0)
+        finally:
+            pm._orgb_connect = orig
+        packet = sent[-1]
+        self.assertEqual(packet[:4], b"ORGB")
+        self.assertEqual(pm.struct.unpack("<III", packet[4:16])[1:], (pm.ORGB_LOAD_PROFILE, 7))
+        self.assertEqual(packet[16:], b"default")          # "default\0" silently matched nothing (10-20)
+
+
 class TestKeepAlive(unittest.TestCase):
     def test_api_keep_alive(self):
         self.assertEqual(pm.api_keep_alive("-1"), -1)
