@@ -1,8 +1,8 @@
 [Unit]
 Description=ProxAI: re-apply the server/personal mode after boot (Phase 10)
 Documentation=file://%h/.hermes/profiles/proxai/mode/README.md
-After=ollama.service
-Wants=ollama.service
+After=ollama.service proxai-openrgb.service
+Wants=ollama.service proxai-openrgb.service
 
 [Service]
 Type=oneshot

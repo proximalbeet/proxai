@@ -23,10 +23,13 @@ import json
 import os
 import re
 import shutil
+import socket
+import struct
 import subprocess
 import sys
 import time
 import tomllib
+import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -43,7 +46,8 @@ if not OLLAMA_URL.startswith("http"):
     OLLAMA_URL = f"http://{OLLAMA_URL}"
 VOICE_URL = os.getenv("PROXAI_VOICE_URL", "http://127.0.0.1:8653")
 ENV_FILE = Path(os.getenv("PROXAI_ENV_FILE", "~/.hermes/profiles/proxai/.env")).expanduser()
-OPENRGB_DIR = Path(os.getenv("PROXAI_OPENRGB_DIR", "~/.config/OpenRGB")).expanduser()
+OPENRGB_PORT = int(os.getenv("PROXAI_OPENRGB_PORT", "6742"))
+OPENRGB_UNIT = "proxai-openrgb.service"
 
 SLEEP_UNIT = "proxai-mode-sleep-block"
 DROPIN_NAME = "50-proxai-mode.conf"
@@ -52,6 +56,64 @@ NO_REAPPLY = {"lock_screen", "display"}
 
 class ModeError(Exception):
     pass
+
+
+# ---- OpenRGB server (its SDK protocol; the `openrgb` CLI quits before the server answers) ------
+
+ORGB_PROTOCOL_VERSION = 40
+ORGB_SET_CLIENT_NAME = 50
+ORGB_PROFILE_LIST = 150
+ORGB_LOAD_PROFILE = 152
+
+
+def _orgb_connect() -> socket.socket:
+    sock = socket.create_connection(("127.0.0.1", OPENRGB_PORT), timeout=3)
+    _orgb_send(sock, ORGB_PROTOCOL_VERSION, struct.pack("<I", 6))
+    _orgb_recv(sock, ORGB_PROTOCOL_VERSION)
+    _orgb_send(sock, ORGB_SET_CLIENT_NAME, b"proxai-mode\0")
+    return sock
+
+
+def _orgb_send(sock: socket.socket, packet: int, data: bytes = b"") -> None:
+    sock.sendall(b"ORGB" + struct.pack("<III", 0, packet, len(data)) + data)
+
+
+def _orgb_read(sock: socket.socket, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("OpenRGB server closed the connection")
+        buf += chunk
+    return buf
+
+
+def _orgb_recv(sock: socket.socket, packet: int) -> bytes:
+    while True:                             # skip notifications (device list changes etc.)
+        head = _orgb_read(sock, 16)
+        if head[:4] != b"ORGB":
+            raise ConnectionError("not an OpenRGB server")
+        _, got, size = struct.unpack("<III", head[4:])
+        data = _orgb_read(sock, size)
+        if got == packet:
+            return data
+
+
+def openrgb_profiles() -> list[str]:
+    with _orgb_connect() as sock:
+        _orgb_send(sock, ORGB_PROFILE_LIST)
+        data = _orgb_recv(sock, ORGB_PROFILE_LIST)
+    (count,), pos, names = struct.unpack_from("<H", data, 4), 6, []
+    for _ in range(count):
+        (n,) = struct.unpack_from("<H", data, pos)
+        names.append(data[pos + 2:pos + 2 + n].rstrip(b"\0").decode(errors="replace"))
+        pos += 2 + n
+    return names
+
+
+def openrgb_load(name: str) -> None:
+    with _orgb_connect() as sock:
+        _orgb_send(sock, ORGB_LOAD_PROFILE, name.encode() + b"\0")
 
 
 # ---- running commands (swapped for a fake in tests) -------------------------------------------
@@ -83,8 +145,31 @@ class Runner:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.status, resp.read().decode(errors="replace")[:2000]
+        except urllib.error.HTTPError as exc:   # keep the server's reason, not just "Bad Request"
+            try:
+                body = exc.read().decode(errors="replace")[:300]
+            except Exception:
+                body = ""
+            return exc.code, f"HTTP {exc.code}: {body or exc.reason}"
         except Exception as exc:
             return 0, str(exc)
+
+    def rgb_profiles(self) -> list[str] | None:
+        """Profiles the OpenRGB server knows, or None if it isn't reachable (read-only)."""
+        try:
+            return openrgb_profiles()
+        except (OSError, struct.error):
+            return None
+
+    def rgb_load(self, name: str) -> tuple[bool, str]:
+        if self.dry_run:
+            self.planned.append(f"openrgb: load profile {name}")
+            return True, "(dry run)"
+        try:
+            openrgb_load(name)
+            return True, ""
+        except OSError as exc:
+            return False, str(exc)
 
     def write_file(self, path: Path, text: str) -> bool:
         """Write only if different. Returns True when the file changed."""
@@ -280,6 +365,14 @@ def _dropin(runner: Runner, unit: str, env: dict) -> bool:
     return runner.write_file(path, body)
 
 
+def api_keep_alive(value):
+    """keep_alive for Ollama's API. The OLLAMA_KEEP_ALIVE env var takes "-1", but the API wants a
+    number or a duration with a unit ("5m"): the string "-1" gets HTTP 400 "missing unit"."""
+    if isinstance(value, str) and re.fullmatch(r"\s*-?\d+\s*", value):
+        return int(value)
+    return value
+
+
 def step_ollama(runner: Runner, step: dict) -> StepResult:
     env = {}
     if "keep_alive" in step:
@@ -303,7 +396,7 @@ def step_ollama(runner: Runner, step: dict) -> StepResult:
     ok = True
     for model in step.get("preload", []):
         status, out = runner.http(f"{OLLAMA_URL}/api/generate",
-                                  {"model": model, "prompt": "", "keep_alive": step.get("keep_alive", "5m")},
+                                  {"model": model, "prompt": "", "keep_alive": api_keep_alive(step.get("keep_alive", "5m"))},
                                   timeout=180)
         if status == 200:
             notes.append(f"loaded {model}")
@@ -413,28 +506,36 @@ def step_display(runner: Runner, step: dict) -> StepResult:
     return StepResult("display", rc == 0, f"display {state}" + (f": {out}" if rc else ""))
 
 
-def _rgb_profile_exists(name: str) -> bool:
-    # OpenRGB 1.x keeps profiles in profiles/<name>.json; older versions used <name>.orp
-    return (OPENRGB_DIR / "profiles" / f"{name}.json").exists() or (OPENRGB_DIR / f"{name}.orp").exists()
+def start_openrgb_server(runner: Runner) -> bool:
+    if not (SYSTEMD_USER_DIR / OPENRGB_UNIT).exists():
+        return False
+    runner.run(["systemctl", "--user", "start", OPENRGB_UNIT], timeout=15)
+    for _ in range(30):                     # it answers once device detection finishes
+        if runner.rgb_profiles() is not None:
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def step_rgb(runner: Runner, step: dict) -> StepResult:
-    """Load an OpenRGB profile, or "off" = every light black. No --noautoconnect: if the OpenRGB
-    window/SDK server is running, the command goes through it (it keeps devices in Direct mode);
-    otherwise the command talks to the devices itself."""
+    """Ask the OpenRGB server (proxai-openrgb.service) to load a saved profile. The server keeps
+    running, so the Corsair Commander CORE holds the colours instead of drifting back to rainbow."""
     profile = str(step.get("profile", "")).strip()
     if not shutil.which("openrgb") and not runner.dry_run:
         return StepResult("rgb", True, "OpenRGB not installed (sudo pacman -S openrgb)", skipped=True)
-    if _rgb_profile_exists(profile) or runner.dry_run and profile != "off":
-        argv = ["openrgb", "--profile", profile]
-    elif profile == "off":
-        # Direct is the one mode all of Nathan's devices support (RAM, HyperX, Commander Core have no Static)
-        argv = ["openrgb", "--mode", "direct", "--color", "000000"]
-    else:
+    profiles = runner.rgb_profiles()
+    if profiles is None and not runner.dry_run:
+        if not start_openrgb_server(runner):
+            return StepResult("rgb", False, "OpenRGB server isn't running "
+                              f"(systemctl --user enable --now {OPENRGB_UNIT})")
+        profiles = runner.rgb_profiles() or []
+    match = next((p for p in profiles or [] if p.lower() == profile.lower()), None)
+    if match is None and not runner.dry_run:
+        how = " with every device set to black" if profile.lower() == "off" else ""
         return StepResult("rgb", True, f"no OpenRGB profile named '{profile}' yet "
-                          "(OpenRGB window → Profiles → Save Profile with that name)", skipped=True)
-    rc, out = runner.run(argv, timeout=60)
-    return StepResult("rgb", rc == 0, f"lights: {profile}" + (f": {out[-200:]}" if rc else ""))
+                          f"(in OpenRGB: Profile → Save as '{profile}'{how})", skipped=True)
+    ok, out = runner.rgb_load(match or profile)
+    return StepResult("rgb", ok, f"lights: {match or profile}" + ("" if ok else f": {out}"))
 
 
 def step_command(runner: Runner, step: dict) -> StepResult:

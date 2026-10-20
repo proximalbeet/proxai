@@ -43,20 +43,24 @@ Every switch (and refusal) goes to `~/.local/state/proxai/mode.log` and #bot-aud
   model; `voice/tts_pipeline.py` reads `hermes.voice` / `hermes.voice_warm`.
 - Ollama and voice-server settings are systemd drop-ins named `50-proxai-mode.conf` under
   `~/.config/systemd/user/{ollama,proxai-phone-voice}.service.d/`.
+- `proxai-openrgb.service` keeps a headless OpenRGB server running. The Corsair Commander CORE
+  only holds a colour while OpenRGB runs, so the rgb step asks this server (over its SDK port,
+  6742) to load a saved profile. The `openrgb` CLI isn't used: in 1.1 it quits before the server
+  sends its device list. The OpenRGB window connects to the server too.
 - `proxai-mode-reapply.service` puts the mode back after a reboot (lights, sleep block, Ollama);
   it doesn't lock the screen.
 
 ## Go-live (Nathan)
 
 1. `git -C ~/.hermes/profiles/proxai merge worktree-phase10-modes`
-2. `bash ~/.hermes/profiles/proxai/mode/install.sh` (puts `proxai-mode` on your PATH)
-3. RGB (OpenRGB 1.1 installed 10-20; it sees both RAM sticks, the HyperX keyboard, Lighting Node
-   Pro, Commander Core, the ASUS board and the Razer mouse). In the OpenRGB window, set your colors,
-   then **Save Profile as `default`** (personal mode loads it). No "off" profile needed: server mode
-   sets every device to black in Direct mode (the RAM, keyboard and Commander Core have no Static mode).
-   Recommended: OpenRGB Settings → start at login, minimized, with the SDK server on. Then the switch
-   goes through OpenRGB instead of fighting it for the devices, and devices that only do Direct mode
-   keep their colors. The OMEN monitor light isn't detected.
+2. `bash ~/.hermes/profiles/proxai/mode/install.sh` (puts `proxai-mode` on your PATH and starts the
+   OpenRGB server, `proxai-openrgb.service`)
+3. RGB (OpenRGB 1.1; sees both RAM sticks, HyperX keyboard, Lighting Node Pro, Commander Core, ASUS
+   board, Razer mouse; the OMEN monitor light isn't detected). Save two profiles, ticking every device
+   in the Profile Editor (an empty profile does nothing): **`default`** (personal mode) = your everyday
+   look; **`Off`** (server mode) = every device in Direct, all black (the RAM has no "Off" mode, so
+   black is how it goes dark). Profiles saved from the window show up right away; a profile file copied
+   in by hand needs `systemctl --user restart proxai-openrgb`.
 4. `systemctl --user restart hermes-gateway-proxai`
 5. Try: `proxai-mode check server`, `proxai-mode set personal`, then from a DM "switch to server mode".
 6. **Once both modes work:** `bash ~/.hermes/profiles/proxai/mode/install.sh --boot`. After every

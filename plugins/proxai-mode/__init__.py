@@ -152,7 +152,8 @@ def _post_audit(text: str) -> None:
 # ---- what a mode does, in words ---------------------------------------------------------------
 
 _STEP_WORDS = {
-    "stop_units": lambda s: "stop " + ", ".join(u.replace(".service", "") for u in s.get("units", [])),
+    "stop_units": lambda s: "make sure " + ", ".join(u.replace(".service", "") for u in s.get("units", []))
+                            + " are off",
     "start_units": lambda s: "start " + ", ".join(u.replace(".service", "") for u in s.get("units", [])),
     "ollama": lambda s: ("keep the local model loaded" if str(s.get("keep_alive")) == "-1"
                          else f"unload the local model after {s.get('keep_alive', '5m')}")

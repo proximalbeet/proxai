@@ -1,0 +1,15 @@
+[Unit]
+Description=ProxAI: OpenRGB server (holds the lights; Corsair Commander CORE goes back to rainbow without it)
+Documentation=file://%h/.hermes/profiles/proxai/mode/README.md
+
+[Service]
+# Headless server. The OpenRGB window and proxai-mode connect to it as clients,
+# so only this process talks to the hardware.
+# Wait (up to 10s) for i2c-dev, or the Dominator RAM isn't detected.
+ExecStartPre=/bin/sh -c 'for i in $(seq 20); do ls /dev/i2c-* >/dev/null 2>&1 && exit 0; sleep 0.5; done; exit 0'
+ExecStart=/usr/bin/openrgb --server --noautoconnect
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

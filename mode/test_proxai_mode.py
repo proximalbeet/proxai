@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import os
 import sys
 import tempfile
@@ -17,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 TMP = Path(tempfile.mkdtemp(prefix="mode-test-", dir=os.environ.get("TMPDIR")))
 os.environ["PROXAI_STATE_DIR"] = str(TMP / "state")
 os.environ["PROXAI_SYSTEMD_USER_DIR"] = str(TMP / "systemd")
-os.environ["PROXAI_OPENRGB_DIR"] = str(TMP / "openrgb")
+os.environ["PROXAI_OPENRGB_PORT"] = "1"                    # nothing listens there: no real server
 os.environ["PROXAI_ENV_FILE"] = str(TMP / ".env")
 (TMP / ".env").write_text('API_SERVER_KEY="k3y"\n')
 
@@ -30,9 +31,10 @@ spec.loader.exec_module(pm)
 class FakeRunner(pm.Runner):
     """Records commands; answers nvidia-smi with canned readings."""
 
-    def __init__(self, gpu="10, 30.0, 1000, 16303, 40", apps="", fail=()):
+    def __init__(self, gpu="10, 30.0, 1000, 16303, 40", apps="", fail=(), rgb=()):
         super().__init__(dry_run=False)
         self.gpu, self.apps, self.fail = gpu, apps, fail
+        self.rgb = None if rgb is None else list(rgb)  # OpenRGB server's profiles; None = down
         self.cmds, self.posts, self.files = [], [], {}
 
     def run(self, argv, timeout=60):
@@ -48,8 +50,19 @@ class FakeRunner(pm.Runner):
             return 0, f"8 1000 {os.getenv('USER', 'prox')} seat0 115674 user tty2 no -"
         return 0, ""
 
+    def rgb_profiles(self):
+        return self.rgb
+
+    def rgb_load(self, name):
+        self.cmds.append(f"openrgb load {name}")
+        return True, ""
+
     def http(self, url, body=None, headers=None, timeout=120):
         self.posts.append((url, body, headers))
+        # Like real Ollama: a keep_alive string needs a unit ("5m"); "-1" is HTTP 400 (bug of 10-20)
+        ka = (body or {}).get("keep_alive")
+        if url.endswith("/api/generate") and isinstance(ka, str) and not re.search(r"[a-z]", ka):
+            return 400, f'HTTP 400: {{"error":"time: missing unit in duration \\"{ka}\\""}}'
         return 200, "{}"
 
     def write_file(self, path, text):
@@ -110,7 +123,7 @@ class TestConfig(Base):
 
 class TestServer(Base):
     def test_switch_runs_every_step_and_writes_state(self):
-        r, run = self.switch("server", by="test")
+        r, run = self.switch("server", FakeRunner(rgb=["Off", "Winterscape"]), by="test")
         self.assertTrue(r["ok"], r["steps"])
         cmds = "\n".join(run.cmds)
         self.assertIn("systemctl --user stop verity-relay.service", cmds)
@@ -118,12 +131,15 @@ class TestServer(Base):
         self.assertIn("--what=sleep:idle:handle-suspend-key", cmds)
         self.assertIn("loginctl lock-session 8", cmds)
         self.assertIn("kscreen-doctor --dpms off", cmds)
-        self.assertIn("openrgb --mode direct --color 000000", cmds)   # Direct: every device supports it
+        self.assertIn("openrgb load Off", cmds)                     # "off" matches "Off"
         dropin = run.files[str(pm.SYSTEMD_USER_DIR / "ollama.service.d" / pm.DROPIN_NAME)]
         self.assertIn("OLLAMA_KEEP_ALIVE=-1", dropin)
         self.assertIn(f"OLLAMA_GPU_OVERHEAD={4096 * 1024 * 1024}", dropin)   # room for the voice
         loads = [b for u, b, _ in run.posts if u.endswith("/api/generate")]
         self.assertEqual(loads[0]["model"], self.modes["server"]["hermes"]["tier1"]["model"])
+        self.assertEqual(loads[0]["keep_alive"], -1)                 # a number, not the string "-1"
+        ollama = [s for s in r["steps"] if s["step"] == "ollama"][0]
+        self.assertIn("loaded qwen3.5:35b-a3b", ollama["detail"])
         urls = [u for u, *_ in run.posts]
         self.assertIn(f"{pm.OLLAMA_URL}/api/generate", urls)
         warm = [p for p in run.posts if p[0].endswith("/v1/warmup")][0]
@@ -205,26 +221,29 @@ class TestPersonal(Base):
         r, _ = self.switch("personal")
         rgb = [s for s in r["steps"] if s["step"] == "rgb"][0]
         self.assertTrue(rgb["skipped"] and rgb["ok"])
-        self.assertIn("no OpenRGB profile named 'default'", rgb["detail"])
+        self.assertIn("Profile → Save as", rgb["detail"])
 
     def test_saved_rgb_profile_is_loaded(self):
-        # OpenRGB 1.x: profiles/<name>.json
-        (TMP / "openrgb" / "profiles").mkdir(parents=True, exist_ok=True)
-        (TMP / "openrgb" / "profiles" / "default.json").write_text("{}")
-        try:
-            _, run = self.switch("personal")
-            self.assertIn("openrgb --profile default", "\n".join(run.cmds))
-        finally:
-            (TMP / "openrgb" / "profiles" / "default.json").unlink()
+        prof = self.modes["personal"]["steps"]
+        name = [st for st in prof if st["type"] == "rgb"][0]["profile"]
+        _, run = self.switch("personal", FakeRunner(rgb=[name]))
+        self.assertIn(f"openrgb load {name}", "\n".join(run.cmds))
 
-    def test_old_style_orp_profile_also_found(self):
-        (TMP / "openrgb").mkdir(exist_ok=True)
-        (TMP / "openrgb" / "default.orp").write_text("x")
+    def test_rgb_starts_openrgb_server_when_down(self):
+        unit = pm.SYSTEMD_USER_DIR / pm.OPENRGB_UNIT
+        made_dir = not unit.parent.exists()
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text("x")
         try:
-            _, run = self.switch("personal")
-            self.assertIn("openrgb --profile default", "\n".join(run.cmds))
+            r, run = self.switch("server", FakeRunner(rgb=None))
         finally:
-            (TMP / "openrgb" / "default.orp").unlink()
+            unit.unlink()
+            if made_dir:
+                unit.parent.rmdir()
+        self.assertIn(f"systemctl --user start {pm.OPENRGB_UNIT}", "\n".join(run.cmds))
+        rgb = [s for s in r["steps"] if s["step"] == "rgb"][0]
+        self.assertFalse(rgb["ok"])                                 # fake start never comes up
+        self.assertIn("server isn't running", rgb["detail"])
 
     def test_reapply_skips_lock_and_display(self):
         self.switch("server")
@@ -234,6 +253,14 @@ class TestPersonal(Base):
         self.assertNotIn("kscreen-doctor", cmds)
         self.assertNotIn("nvidia-smi", cmds)                        # no busy check on reapply
         self.assertIn("reapplied", r)
+
+
+class TestKeepAlive(unittest.TestCase):
+    def test_api_keep_alive(self):
+        self.assertEqual(pm.api_keep_alive("-1"), -1)
+        self.assertEqual(pm.api_keep_alive("0"), 0)
+        self.assertEqual(pm.api_keep_alive("2m"), "2m")
+        self.assertEqual(pm.api_keep_alive(-1), -1)
 
 
 class TestLock(Base):

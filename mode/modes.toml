@@ -10,7 +10,7 @@
 #   sleep_block                true = hold a sleep/idle block for as long as the mode is on
 #   lock_screen                lock the desktop session
 #   display                    "off" / "on"
-#   rgb                        OpenRGB profile name ("off" = all lights black). Skipped if OpenRGB isn't installed
+#   rgb                        OpenRGB profile to load via the proxai-openrgb server (name, any case). Skipped if the profile isn't saved
 #   command                    any argv you add yourself, e.g. { type = "command", argv = ["notify-send", "hi"] }
 # Add `reapply = false` to a step that shouldn't run again at login (lock_screen, display do this by default).
 
@@ -65,7 +65,7 @@ description = "Away from the desk: ProxAI gets the machine. No sleep, screen loc
 
   [[server.steps]]
   type = "rgb"
-  profile = "off"                # all lights black (Direct mode); no OpenRGB profile needed
+  profile = "off"                # OpenRGB profile "Off": every device black
 
   [[server.steps]]
   type = "lock_screen"
@@ -103,4 +103,4 @@ description = "At the desk: the GPU is yours. Local AI unloads after use, Hermes
 
   [[personal.steps]]
   type = "rgb"
-  profile = "default"            # OpenRGB profile named "default" (Nathan 10-20); more named profiles later
+  profile = "default"            # your everyday OpenRGB profile (copy any profile to "default" to change it)
