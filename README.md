@@ -19,13 +19,25 @@ Discord ──► Gateway (host, systemd) ──► discord-routing plugin ─�
 
 ## Model tiers
 
-| Tier | Model | Runs on | Channels |
-|---|---|---|---|
-| tier1 | `qwen3.5:9b` (Ollama, 64K context) | Local GPU | brain-dump, focus-sessions, daily-goals, ollama-outputs, model-logs, bot-commands, build-status, bot-audit-log, announcements |
-| tier2 | Claude Sonnet 5.5 | Anthropic API | general-chat, vault-queries, research-drops, arduino-logs, build-errors, quest-dev-logs, vr-ideas, DMs |
-| tier3 | Claude Opus 5.5 | Anthropic API | code-assist |
+Which model answers depends on where you ask and, for tier1, on the machine's mode (server/personal, see `mode/README.md`).
+
+| Tier | Personal mode (default) | Server mode | Runs on | Where |
+|---|---|---|---|---|
+| tier1 | `qwen3.5:9b` (unloads 2 min after use) | `qwen3.5:35b-a3b` (kept loaded) | Local GPU, 64K context (35b: ~97% GPU / 3% CPU) | announcements, bot-audit-log, bot-commands, brain-dump, build-status, daily-goals, focus-sessions, model-logs, ollama-outputs, sandbox-alerts, and any unlisted channel |
+| tier2 | Claude Sonnet 5.5 | same | Anthropic API | arduino-logs, build-errors, general-chat, quest-dev-logs, research-drops, vault-queries, vr-ideas |
+| tier3 | Claude Opus 5.5 | same | Anthropic API | code-assist, and any message starting with `!opus` |
+| default | Claude Sonnet 5.5 (`config.yaml` `model.default`) | same | Anthropic API | Discord DMs, the phone app (API server), CLI |
+
+Other models in the stack:
+
+| Job | Model | Runs on |
+|---|---|---|
+| Voice replies (Kanye) | Chatterbox + `voice/reference/kanye.wav` | GPU (~3.4 GB). Off in personal mode; kept loaded in server mode |
+| Voice notes in | Whisper `base` (int8) | CPU |
+| Heavy coding/commands | Claude Code (subscription) | Docker sandbox (Phase 7) |
 
 - **Routing and instructions:** routing is set by channel name in `plugins/discord-routing/routing.json`. Each channel also has its own instructions there: its purpose, where it may write, and what to post back.
+- **Mode:** the server-mode tier1 model is set in `mode/modes.toml` (`[server.hermes].tier1`), not in `routing.json`. Switching mode changes it on the next message; `!model` in a channel shows the current one.
 - **Threads:** a thread inherits its parent channel's tier and instructions.
 - **Fallbacks:** unlisted channels fall back to tier1. Starting a message with `!opus` sends just that message to tier3.
 - **Reloading:** the plugin reloads `routing.json` when the file changes, so you don't need to restart.
@@ -80,7 +92,9 @@ The `kanye` TTS provider uses Chatterbox voice cloning (`voice/tts_pipeline.py`)
 | `config.yaml` | Hermes profile config: models, Docker backend, mounts, Discord, TTS, approvals |
 | `profile.yaml` | Profile description |
 | `plugins/discord-routing/` | Channel → tier routing, per-channel instructions, `!opus` override |
-| `voice/` | TTS scripts only |
+| `voice/` | TTS scripts only (plus `spoken_text.py`: text cleanup before speaking) |
+| `mode/` | Server/personal mode switch: `proxai_mode.py`, `modes.toml` (what each mode changes), `proxai-mode` CLI |
+| `plugins/proxai-mode/` | `proxai_mode` tool + `/mode`; switches only from DMs/phone after Nathan says yes |
 | `skills/knowledge/vault-manager/` | Vault search, filing and dashboards |
 | `skills/openclaw-imports/` | Wiki skills: ingest, query, lint, dedup, cross-link, research and more |
 
@@ -102,7 +116,7 @@ journalctl --user -u hermes-gateway-proxai -f
 
 **Requirements:**
 - Ollama runs with `OLLAMA_CONTEXT_LENGTH=65536`. Hermes needs at least 64K context.
-- `qwen3.5:9b` is pulled.
+- `qwen3.5:9b` is pulled, and `qwen3.5:35b-a3b` for server mode.
 - Docker is running.
 
 **`.env`** (in the profile folder, not committed) needs these variables:

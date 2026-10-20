@@ -36,9 +36,9 @@ description = "Away from the desk: ProxAI gets the machine. No sleep, screen loc
   voice = true                   # voice replies on
   voice_warm = true              # Discord voice replies use the warm voice server, Ollama isn't unloaded first
   # tier1 channels use this local model while in server mode (routing.json tiers.tier1 otherwise).
-  # OPEN DECISION (Nathan): qwen3.5:9b is a placeholder until the heavier model is picked and pulled.
-  # Candidates that fit the 16 GB 5070 Ti next to the 3.4 GB voice model: see mode/README.md.
-  tier1 = { model = "qwen3.5:9b", label = "Ollama / qwen3.5:9b (server mode)" }
+  # Picked by Nathan 2026-10-19. Tested at 64K context with ~3.3 GB of VRAM taken by other things:
+  # 97% GPU / 3% CPU, ~11.8 GB VRAM, 57 tok/s writing, ~580 tok/s reading prompts, tools 3/3.
+  tier1 = { model = "qwen3.5:35b-a3b", label = "Ollama / qwen3.5:35b-a3b (server mode)" }
 
   [[server.steps]]
   type = "stop_units"
@@ -49,8 +49,9 @@ description = "Away from the desk: ProxAI gets the machine. No sleep, screen loc
   type = "ollama"
   keep_alive = "-1"              # never unload
   max_loaded_models = 1          # the big model only, no surprise second model filling VRAM
+  gpu_overhead_mib = 4096        # keep 4 GB of VRAM free for the Kanye voice (~3.4 GB), or it runs out of memory
   unload_all = true              # drop whatever is loaded, then preload below
-  preload = ["qwen3.5:9b"]       # keep in sync with [server.hermes].tier1.model
+  preload = ["qwen3.5:35b-a3b"]  # keep in sync with [server.hermes].tier1.model
 
   [[server.steps]]
   type = "voice_server"

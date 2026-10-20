@@ -121,6 +121,9 @@ class TestServer(Base):
         self.assertIn("openrgb --noautoconnect --mode static --color 000000", cmds)
         dropin = run.files[str(pm.SYSTEMD_USER_DIR / "ollama.service.d" / pm.DROPIN_NAME)]
         self.assertIn("OLLAMA_KEEP_ALIVE=-1", dropin)
+        self.assertIn(f"OLLAMA_GPU_OVERHEAD={4096 * 1024 * 1024}", dropin)   # room for the voice
+        loads = [b for u, b, _ in run.posts if u.endswith("/api/generate")]
+        self.assertEqual(loads[0]["model"], self.modes["server"]["hermes"]["tier1"]["model"])
         urls = [u for u, *_ in run.posts]
         self.assertIn(f"{pm.OLLAMA_URL}/api/generate", urls)
         warm = [p for p in run.posts if p[0].endswith("/v1/warmup")][0]
@@ -195,6 +198,7 @@ class TestPersonal(Base):
         self.assertNotIn("nvidia-smi", cmds)                        # no busy check for personal
         dropin = run.files[str(pm.SYSTEMD_USER_DIR / "ollama.service.d" / pm.DROPIN_NAME)]
         self.assertIn("OLLAMA_KEEP_ALIVE=2m", dropin)
+        self.assertNotIn("OLLAMA_GPU_OVERHEAD", dropin)   # personal mode gives games the whole GPU
         self.assertFalse(json.loads(pm.MODE_FILE.read_text())["hermes"]["voice"])
 
     def test_missing_rgb_profile_is_skipped_not_failed(self):

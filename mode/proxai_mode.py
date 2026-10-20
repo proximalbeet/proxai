@@ -286,6 +286,8 @@ def step_ollama(runner: Runner, step: dict) -> StepResult:
         env["OLLAMA_KEEP_ALIVE"] = str(step["keep_alive"])
     if "max_loaded_models" in step:
         env["OLLAMA_MAX_LOADED_MODELS"] = str(step["max_loaded_models"])
+    if "gpu_overhead_mib" in step:   # VRAM Ollama leaves free (for the voice model)
+        env["OLLAMA_GPU_OVERHEAD"] = str(int(step["gpu_overhead_mib"]) * 1024 * 1024)
     notes = []
     if _dropin(runner, "ollama.service", env):
         runner.run(["systemctl", "--user", "daemon-reload"])

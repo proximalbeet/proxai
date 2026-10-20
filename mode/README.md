@@ -57,21 +57,29 @@ Every switch (and refusal) goes to `~/.local/state/proxai/mode.log` and #bot-aud
 4. `systemctl --user restart hermes-gateway-proxai`
 5. Try: `proxai-mode check server`, `proxai-mode set personal`, then from a DM "switch to server mode".
 
-## Open decision: the server-mode model
+## The server-mode model: `qwen3.5:35b-a3b` (picked 2026-10-19)
 
-`modes.toml` uses `qwen3.5:9b` as a placeholder. The 5070 Ti has 16 GB; in server mode the warm
-voice model takes ~3.4 GB and the desktop ~0.5 GB, so ~12 GB is left. Options (not benchmarked yet):
+Mixture-of-experts, 35B total / 3B active, Q4_K_M, 22 GB download. Measured 2026-10-20 at 64K context
+with ~3.3 GB of VRAM already taken (about what the warm voice holds in server mode):
 
-| Model | Size | Fits next to the voice? | Notes |
-|---|---|---|---|
-| `qwen3.5:9b-q8_0` | 10 GB | yes | same model, higher precision. Small step up, safest |
-| `qwen3.5:35b-a3b` | 22 GB | no, splits ~11 GB GPU / ~11 GB RAM | much more capable. Mixture-of-experts (3B active) so a split should stay usable; test the speed. Uses ~11 GB of your 31 GB RAM |
-| `gpt-oss:20b` | ~14 GB | no (voice would push it out) | |
-| `qwen3.5:27b` | 17 GB | no | dense, too slow when split. Not recommended |
+| | qwen3.5:9b (personal) | qwen3.5:35b-a3b (server) |
+|---|---|---|
+| Placement | 100% GPU, ~7 GB | 97% GPU / 3% CPU, ~11.8 GB VRAM |
+| Load time | ~2 s | ~16 s (once; kept loaded in server mode) |
+| Writing | ~104 tok/s | ~57 tok/s |
+| Reading prompts | ~5,000 tok/s | ~580 tok/s (a 15.8k-token prompt: 27 s) |
+| Quick tool check (3 cases) | 3/3 | 3/3 |
 
-To switch: `ollama pull <model>`, then in `modes.toml` set `[server.hermes].tier1.model` and the
-ollama step's `preload` to it, and add it under `custom_providers` → `models` in `config.yaml` with
-`context_length: 65536` (Hermes needs ≥64K). Then rerun the Phase 3 tool tests in server mode.
+The quick check was too easy to separate them; rerun the Phase 3 tool tests in server mode after
+go-live. Expect the first reply of a fresh tier1 conversation to take ~10-20 s (prompt reading);
+follow-ups reuse Ollama's prompt cache.
+
+Server mode sets `OLLAMA_GPU_OVERHEAD` to 4 GB (`gpu_overhead_mib` in `modes.toml`) so the model
+always leaves room for the Kanye voice; without it Ollama loads first and fills the card.
+
+To change the model later: `ollama pull <model>`, set `[server.hermes].tier1.model` and the ollama
+step's `preload` in `modes.toml`, and add it under `custom_providers` → `models` in `config.yaml`
+with `context_length: 65536` (Hermes needs ≥64K).
 
 ## Tests
 

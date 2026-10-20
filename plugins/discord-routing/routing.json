@@ -1,4 +1,5 @@
 {
+  "_comment": "Channel -> tier routing. tier1 is the PERSONAL-mode (default) local model. In SERVER mode (Phase 10) tier1 uses the model in mode/modes.toml [server.hermes].tier1 (qwen3.5:35b-a3b) instead; the plugin reads ~/.local/state/proxai/mode.json on every message. DMs and the phone app aren't routed here: they use config.yaml's default model (Sonnet). !model shows the current model.",
   "tiers": {
     "tier1": {
       "label": "Ollama / qwen3.5:9b",

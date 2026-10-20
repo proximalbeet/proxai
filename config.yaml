@@ -614,6 +614,8 @@ custom_providers:
     models:
       qwen3.5:9b:
         context_length: 65536
+      qwen3.5:35b-a3b:
+        context_length: 65536
       qwen3:14b:
         context_length: 65536
       qwen3:14b-64k:
