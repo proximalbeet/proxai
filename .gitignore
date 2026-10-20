@@ -52,6 +52,9 @@ __pycache__/
 !voice/
 !voice/tts_pipeline.py
 !voice/tts_rvc.py
+!voice/spoken_text.py
+!voice/test_spoken_text.py
+!voice/pronunciations.json
 
 # Community plugin, pinned copy of the reviewed commit (fastfinge/hermes-session-reset-policy 493df02)
 !plugins/hermes-session-reset-policy/
