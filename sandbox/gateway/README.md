@@ -10,21 +10,23 @@ but sees an empty home folder except an allow-list. `sandbox.conf` is a systemd 
 | `~/.local/state/proxai`, `~/.local/state/hermes`, `~/.local/share/proxai` | rw | ProxAI state/logs, gateway locks, outbox + empty-folder mounts |
 | `~/.cache/huggingface`, `~/.cache/torch`, `~/.cache/nvidia` | rw | local Whisper, Kanye TTS, CUDA caches |
 | `~/.local/bin` | ro | on the unit's PATH |
+| `~/.config/systemd/user` | ro | Hermes won't start unless it sees its own unit file (exit 78, "does not get a gateway of its own"); read-only, so it can't edit units or the installed `sandbox.conf` |
 | `~/dev/proxai` | ro | Claude Code workspace (container writes it; the gateway reads results to send them) |
 | vault | ro | |
 | `05-Brain-Dump/`, `_inbox/`, `07-Security/ProxAI-Audit/` | rw | plugin captures, security log |
 | `01-Personal/`, `.git/`, `.obsidian/`, rest of `07-Security/` | hidden | |
 | `/run/user/<uid>/bus`, `/run/user/<uid>/systemd` | rw | mode switch (`systemd-run --user`), vault-sync "sync now" |
 
-Everything else in `~` is hidden: `~/.ssh`, `~/.git-credentials`, `~/.config` (browser profiles,
-systemd units), `~/Downloads`, `~/Documents` outside the vault (e.g. `apikeys.txt`), `~/.local/share`.
+Everything else in `~` is hidden: `~/.ssh`, `~/.git-credentials`, `~/.config` (browser profiles etc.;
+only `systemd/user` is shown, read-only), `~/Downloads`, `~/Documents` outside the vault (e.g. `apikeys.txt`), `~/.local/share`.
 Also: `ProtectSystem=strict` (system folders read-only), `PrivateTmp=yes`, `NoNewPrivileges=yes`.
 
 ## Check it first (doesn't touch the running gateway)
 
     sandbox/gateway/check.sh
 
-Runs `probe.py` and `hermes plugins list` as a throwaway systemd job under the same rules.
+Runs `probe.py`, Hermes's own gateway start check and `hermes plugins list` as throwaway
+systemd jobs under the same rules.
 The probe never opens private files: hidden folders are counted, the vault is checked with
 `os.access`. Expect `N/N checks passed` and the 4 ProxAI plugins listed.
 

@@ -28,6 +28,20 @@ echo "### Probe (inside the sandbox)"
 status=0
 run /usr/bin/python3 -I - < "$here/probe.py" || status=$?
 
+echo
+echo "### Hermes's own start check (the one 'gateway run' does first; no second gateway is started)"
+venv_python="$(ls -d "$HOME"/.hermes/installs/*/environments/*/venv/bin/python3 | head -1)"
+run "$venv_python" -I - <<'EOF' || status=$?
+import sys
+sys.path.insert(0, "/home/prox/.hermes/hermes-agent")
+from hermes_cli import gateway as g
+installed = g._is_service_installed()
+refused = g._named_profile_refused_under_multiplexer()
+print(f"{'PASS' if installed else 'FAIL'}  Hermes sees its installed service")
+print(f"{'FAIL' if refused else 'PASS'}  gateway start not refused")
+sys.exit(1 if refused or not installed else 0)
+EOF
+
 if [[ "${1:-}" != "--probe" ]]; then
     echo
     echo "### Hermes loads its config and plugins inside the sandbox"
