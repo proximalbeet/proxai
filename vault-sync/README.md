@@ -120,16 +120,51 @@ the plaintext token.
 
 ## Laptop
 
-1. Pull once after step 3 above. Git removes the laptop's `.obsidian/workspace.json` from tracking,
-   which deletes the file: Obsidian's layout resets once, then it's per-device for good
-2. Obsidian Git plugin (laptop only; its folder is gitignored): Pull on startup **on**,
-   Auto pull interval **10**, Auto commit-and-sync interval **10**, Pull before push **on**,
-   Sync method **Rebase**. Same `.gitignore` arrives through the pull
-3. The laptop pushes with its own login (your normal GitHub auth); the desktop deploy key is desktop only
+Arch laptop, Obsidian Git plugin (syncs while Obsidian is open, shows conflicts inside Obsidian).
+Use Obsidian from pacman (`obsidian`), not Flatpak: the plugin runs the system `git` and `ssh`.
+Vault path below is `~/Documents/ProxVault`; change it if the laptop keeps it elsewhere.
+
+1. **Own deploy key** (revocable on its own; the desktop key stays desktop only):
+   ```fish
+   ssh-keygen -t ed25519 -N '' -C proxvault-laptop -f ~/.ssh/proxvault_laptop
+   cat ~/.ssh/proxvault_laptop.pub
+   ```
+   GitHub → ProxVault → Settings → Deploy keys → Add, tick **Allow write access**. Then point the
+   vault at it and check (first connect asks about GitHub's key: it must be
+   `SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`, then type `yes`):
+   ```fish
+   cd ~/Documents/ProxVault
+   git remote set-url origin git@github.com:proximalbeet/ProxVault.git
+   git config core.sshCommand "ssh -i ~/.ssh/proxvault_laptop -o IdentitiesOnly=yes"
+   ssh -i ~/.ssh/proxvault_laptop -o IdentitiesOnly=yes -T git@github.com
+   ```
+2. **First sync by hand, Obsidian closed.** The desktop stopped tracking `workspace.json` and
+   `graph.json`; set the laptop's copies aside so the pull can't trip on them, then put them back
+   (now ignored, so the laptop keeps its own layout):
+   ```fish
+   cp .obsidian/workspace.json .obsidian/graph.json /tmp/
+   git checkout -- .obsidian/workspace.json .obsidian/graph.json
+   git add -A; git commit -m "laptop notes"   # "nothing to commit" is fine
+   git pull --rebase
+   git push
+   cp /tmp/workspace.json /tmp/graph.json .obsidian/
+   git status                                  # should be clean
+   ```
+   If the pull stops on a conflict: fix the `<<<<<<<` blocks, `git add <note>`,
+   `git rebase --continue`, then `git push`.
+3. **Obsidian Git plugin**: Settings → Community plugins → Browse → "Git" (by Vinzent) → Install →
+   Enable. In its settings: Auto commit-and-sync interval **10**, Auto pull interval **10**,
+   Pull on startup **on**, Push on commit-and-sync **on**, Pull on commit-and-sync **on**,
+   Sync method / merge strategy **Rebase**, commit message e.g. `vault: laptop {{date}}`.
+   Its folder (`.obsidian/plugins/obsidian-git/`) is gitignored. `community-plugins.json` does sync,
+   so the desktop lists the plugin too; Obsidian skips listed plugins that aren't installed
+4. **Test**: make a note on the laptop, run "Git: Commit-and-sync" from the command palette; it
+   reaches the desktop within 10 min. Make one on the desktop; it shows on the laptop after the
+   next auto pull (or "Git: Pull")
 
 ## Tests
 
-- `python3 vault-sync/test_vault_sync.py` (11 tests, throwaway repos, no network)
+- `python3 vault-sync/test_vault_sync.py` (12 tests, throwaway repos, no network)
 - Live: edit different notes on both computers within a few minutes → both appear on both, no
   conflict. Edit the same line of one note on both → `/vault-sync` shows "PAUSED: conflict",
   one ⚠️ line in `#bot-audit-log`, nothing changed on disk; fix it → ✅ line
