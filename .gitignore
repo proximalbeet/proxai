@@ -54,6 +54,8 @@ __pycache__/
 !sandbox/image/**
 !sandbox/egress/
 !sandbox/egress/**
+!sandbox/gateway/
+!sandbox/gateway/**
 
 # Voice pipeline scripts only (no models, reference audio or virtualenvs)
 !voice/
