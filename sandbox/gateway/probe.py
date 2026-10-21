@@ -78,7 +78,15 @@ whisper = H / ".cache/huggingface/hub/models--Systran--faster-whisper-base"
 check(whisper.is_dir(), "local Whisper model cache visible")
 
 print("== Must be hidden")
-for p in [H / ".ssh", H / ".git-credentials", H / ".config", H / ".config/systemd/user", H / "Downloads",
+unit = H / ".config/systemd/user/hermes-gateway-proxai.service"
+check(unit.is_file() and not writable(unit.parent), "own unit file visible, read-only (Hermes needs it to start)")
+check(not writable(unit.parent / "hermes-gateway-proxai.service.d/sandbox.conf"), "installed sandbox.conf not writable")
+try:
+    config = sorted(os.listdir(H / ".config"))
+except OSError:
+    config = []
+check(config == ["systemd"], f"~/.config shows only systemd/ ({len(config)} entries)")
+for p in [H / ".ssh", H / ".git-credentials", H / ".config/BraveSoftware", H / "Downloads",
           H / ".local/share/claude",
           H / "Documents/apikeys.txt", H / ".hermes/profiles/onetouchai", H / ".hermes/profiles/huskytutor",
           VAULT / "01-Personal", VAULT / ".git", VAULT / ".obsidian"]:
