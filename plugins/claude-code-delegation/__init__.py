@@ -6,6 +6,11 @@ Claude Code delegation for the ProxAI profile (checklist Phase 7).
   sandbox, in ``/workspace/proxai/<project>`` (= ``~/dev/proxai/<project>`` on the host).
   The task travels as base64 on stdin, never as shell text. Turn and time caps are
   set here and clamped again by cc-run.
+* The run is started as a tracked background process and this tool waits for it itself.
+  Hermes's foreground terminal refuses to wait longer than 600 s and would return
+  "Background process started" at once, which looked like a failure while Claude Code
+  kept going. /stop or a new message stops the run, like a foreground command, and the
+  whole run is killed inside the sandbox (Hermes's own kill only stops the outer shell).
 * Every run is logged host-side to ``~/.local/state/proxai/claude-code.log`` (JSONL,
   out of the container's reach) and as one line in #bot-audit-log.
 * Which channels may call it is decided by the discord-routing guard
@@ -19,6 +24,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -29,6 +35,10 @@ _PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _MAX_TASK_CHARS = 20000
 _DEFAULT_TURNS, _MAX_TURNS = 25, 60
 _DEFAULT_MINUTES, _MAX_MINUTES = 15, 30
+_GRACE_S = 60          # extra time past cc-run's own limit before the run is killed here
+_WAIT_SLICE_S = 120    # process_registry.wait() is clamped to TERMINAL_TIMEOUT; wait in slices
+_LOG_TAIL_LINES = 40   # cc-run's result is its last output line
+_TAG_VAR = "PROXAI_CC_RUN"  # marks every process of one run, for stopping it
 
 _gateway = None  # captured on the first Discord message, used for audit posts
 
@@ -124,6 +134,68 @@ def _post_audit(text: str) -> None:
         logger.debug("[claude-code] audit scheduling failed: %s", exc)
 
 
+def _reap_command(tag: str) -> str:
+    """Shell that TERMs, then KILLs, every process whose environment carries the run's tag."""
+    find = (f"grep -lsz '^{_TAG_VAR}={tag}$' /proc/[0-9]*/environ 2>/dev/null"
+            " | cut -d/ -f3 | grep -vx \"$$\"")
+    return (f"pids=$({find}); [ -n \"$pids\" ] && kill -TERM $pids 2>/dev/null; sleep 3; "
+            f"pids=$({find}); [ -n \"$pids\" ] && kill -KILL $pids 2>/dev/null; true")
+
+
+def _stop_run(registry, proc_id: str, tag: str, source: str) -> None:
+    session = registry.get(proc_id)
+    env = getattr(session, "env_ref", None)
+    registry.kill_process(proc_id, source=source)
+    if env is not None:  # sandbox run: kill the rest of the tree inside the container
+        try:
+            env.execute(_reap_command(tag), timeout=20)
+        except Exception as exc:
+            logger.warning("[claude-code] could not stop run %s in the sandbox: %s", proc_id, exc)
+
+
+def _run_and_wait(command: str, limit_s: int, *, task_id=None, session_id=None) -> dict:
+    """Start ``command`` as a tracked background process in the sandbox and block until it
+    exits. Returns {"exit_code", "output"} or {"exit_code", "error"}.
+
+    cc-run enforces the real time limit; ``limit_s`` (that limit + grace) is a backstop
+    after which the run is killed here."""
+    from tools.terminal_tool import terminal_tool
+    from tools.process_registry import process_registry
+
+    # Every process of this run (cc-run, timeout, claude and whatever claude starts) inherits
+    # the tag, so a stop can find them all.
+    tag = uuid.uuid4().hex
+    raw = terminal_tool(command=f"export {_TAG_VAR}={tag}; {command}", background=True,
+                        notify_on_complete=False, timeout=limit_s, task_id=task_id, session_id=session_id)
+    try:
+        spawn = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+    except ValueError:
+        spawn = {"output": str(raw)}
+    proc_id = spawn.get("session_id")
+    if spawn.get("error") or not proc_id:
+        return {"exit_code": spawn.get("exit_code"),
+                "error": spawn.get("error") or f"could not start Claude Code: {str(spawn.get('output'))[:500]}"}
+
+    deadline = time.monotonic() + limit_s
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _stop_run(process_registry, proc_id, tag, "claude_code.deadline")
+            return {"exit_code": 124, "error": f"Claude Code did not finish within {limit_s}s and was stopped"}
+        res = process_registry.wait(proc_id, timeout=max(1, int(min(remaining, _WAIT_SLICE_S))))
+        status = res.get("status")
+        if status == "exited":
+            log = process_registry.read_log(proc_id, limit=_LOG_TAIL_LINES)
+            return {"exit_code": res.get("exit_code"), "output": log.get("output") or res.get("output") or ""}
+        if status == "interrupted":
+            if res.get("process_running"):
+                continue  # a steer message only releases the wait; keep waiting like a foreground run
+            _stop_run(process_registry, proc_id, tag, "claude_code.interrupted")
+            return {"exit_code": 130, "error": "stopped: /stop or a new message arrived while Claude Code was running"}
+        if status != "timeout":
+            return {"exit_code": None, "error": f"lost track of the Claude Code run ({status}): {res.get('error', '')}"}
+
+
 def _handle_claude_code(args: dict, task_id: str | None = None, session_id: str | None = None) -> str:
     task = str(args.get("task") or "").strip()
     project = str(args.get("project") or "").strip()
@@ -150,15 +222,10 @@ def _handle_claude_code(args: dict, task_id: str | None = None, session_id: str 
     command = (f"printf %s {payload} | base64 -d | "
                f"cc-run --project {project} --max-turns {turns} --timeout {seconds}")
 
-    from tools.terminal_tool import terminal_tool
     started = time.time()
-    raw = terminal_tool(command=command, timeout=seconds + 60, task_id=task_id, session_id=session_id)
+    term = _run_and_wait(command, seconds + _GRACE_S, task_id=task_id, session_id=session_id)
     elapsed = round(time.time() - started, 1)
 
-    try:
-        term = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
-    except ValueError:
-        term = {"output": str(raw)}
     exit_code = term.get("exit_code")
     output = term.get("output") or ""
     cc = _parse_cc_output(output)
