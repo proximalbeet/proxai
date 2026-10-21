@@ -86,8 +86,11 @@ def git_env() -> dict:
         "LC_ALL": "C",
     })
     if REMOTE.startswith("git@") or REMOTE.startswith("ssh://"):
+        # -F none: read no ssh config at all. Everything needed is on this command line, and in
+        # the systemd sandbox root-owned files in /etc/ssh/ssh_config.d look foreign, so ssh
+        # refuses them ("Bad owner or permissions", first live run 10-21).
         env["GIT_SSH_COMMAND"] = (
-            f"ssh -i {SSH_KEY} -o IdentitiesOnly=yes -o BatchMode=yes "
+            f"ssh -F none -i {SSH_KEY} -o IdentitiesOnly=yes -o BatchMode=yes "
             f"-o StrictHostKeyChecking=yes -o UserKnownHostsFile={KNOWN_HOSTS} "
             "-o ConnectTimeout=20"
         )
