@@ -47,7 +47,8 @@ the plaintext token.
 ## Why conflicts should be rare
 
 - `.obsidian/workspace.json` (window layout, changes on every click) is no longer tracked. It was
-  the main conflict source: both computers had changed it
+  the main conflict source: both computers had changed it. Same for `.obsidian/graph.json` (graph
+  view zoom and filters; both had changed it by 10-21)
 - Hermes writes one new file per capture; it never edits notes the laptop edits. The refiler is the
   only desktop process that edits existing notes (`00-Daily`), and it shares the lock
 - The laptop's Obsidian Git plugin folder is ignored, so desktop Obsidian never runs a second syncer
@@ -79,15 +80,25 @@ the plaintext token.
    tick **Allow write access**. Check:
    `ssh -i ~/.ssh/proxvault_deploy -o IdentitiesOnly=yes -T git@github.com`
    → "Hi proximalbeet/ProxVault! You've successfully authenticated"
-3. **Close Obsidian on the desktop**, then the one-time switch-over:
+3. **Close Obsidian on the desktop.** Then, **before** `prepare`, take the laptop's copy of
+   `01-Personal/TODO.md` (both computers changed it, checked 10-21; a merge test of the real vault
+   with this step and the `graph.json` change shows no other conflicts). Keep the desktop copy aside:
+   ```fish
+   cd ~/Documents/ProxVault; git fetch origin
+   cp 01-Personal/TODO.md ~/TODO.desktop.md
+   git show origin/main:01-Personal/TODO.md > 01-Personal/TODO.md
+   ```
+   Then the one-time switch-over:
    ```fish
    python3 ~/.hermes/profiles/proxai/vault-sync/vault_sync.py prepare          # shows the plan
    python3 ~/.hermes/profiles/proxai/vault-sync/vault_sync.py prepare --apply
    ```
-   It backs up `workspace.json`, commits the desktop's changes, pulls the laptop's, pushes, then
-   untracks `workspace.json` and adds `.gitignore`, and puts your desktop layout back. This replaces
-   the old "finish the vault pull (`git stash; git pull; git stash pop`)" action. If both computers
-   changed the same lines (e.g. `01-Personal/TODO.md`), it stops with nothing changed: fix as above,
+   It backs up `workspace.json` and `graph.json`, commits the desktop's changes, pulls the laptop's,
+   pushes, then untracks those two and adds `.gitignore`, and puts your desktop layout back.
+   Finally copy anything you still want from `~/TODO.desktop.md` into `01-Personal/TODO.md`; the
+   next sync commits it. This replaces the old "finish the vault pull (`git stash; git pull;
+   git stash pop`)" action. If `prepare` still reports a conflict, the desktop's changes are
+   already committed, so fix it with the rebase steps above (`git rebase --autostash origin/main`),
    then run `prepare --apply` again
 4. Timer:
    ```fish

@@ -2,6 +2,8 @@
 # Per-device Obsidian state: window layout and recent files change on every click
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
+# Graph view zoom, filters and open state: rewritten whenever the graph is opened
+.obsidian/graph.json
 .obsidian/cache
 # The laptop syncs with the Obsidian Git plugin. Keep it off the desktop, where the
 # vault-sync timer does the syncing (two syncers on one repo would race each other).

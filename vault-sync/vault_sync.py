@@ -56,7 +56,9 @@ PRIVATE_DIRS = ("01-Personal/", "07-Security/")
 # lands next run), so they never make a run wait.
 QUIET_EXEMPT = ("07-Security/ProxAI-Audit/",)
 # Per-device Obsidian state: never tracked (also listed in vault.gitignore).
-UNTRACK = (".obsidian/workspace.json", ".obsidian/workspace-mobile.json")
+# Per-device Obsidian state. graph.json (graph view zoom/filters) changes whenever the graph
+# is opened; both computers had changed it by 10-21, so it would conflict like workspace.json.
+UNTRACK = (".obsidian/workspace.json", ".obsidian/workspace-mobile.json", ".obsidian/graph.json")
 
 
 class SyncError(Exception):

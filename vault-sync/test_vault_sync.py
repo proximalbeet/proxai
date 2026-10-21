@@ -47,6 +47,7 @@ class VaultSyncTest(unittest.TestCase):
         write(seed / "04-Knowledge/a.md", "line 1\nline 2\nline 3\n")
         write(seed / "01-Personal/TODO.md", "- one\n")
         write(seed / ".obsidian/workspace.json", '{"layout": 0}\n')
+        write(seed / ".obsidian/graph.json", '{"scale": 1}\n')
         write(seed / ".obsidian/app.json", "{}\n")
         sh(seed, "add", "-A"); sh(seed, "commit", "-qm", "seed")
         sh(seed, "push", "-q", str(self.remote), "main")
@@ -163,12 +164,17 @@ class VaultSyncTest(unittest.TestCase):
         # both sides changed workspace.json: a plain pull would conflict
         self.laptop_push(".obsidian/workspace.json", '{"layout": "laptop"}\n')
         write(self.desktop / ".obsidian/workspace.json", '{"layout": "desktop"}\n')
+        # graph.json too (both computers had changed it on 10-21)
+        self.laptop_push(".obsidian/graph.json", '{"scale": "laptop"}\n')
+        write(self.desktop / ".obsidian/graph.json", '{"scale": "desktop"}\n')
         write(self.desktop / "_inbox/n.md", "note\n")
         self.assertEqual(self.vs.prepare(apply=True), 0, self.state_json())
         files = sh(self.remote, "ls-tree", "-r", "--name-only", "main").split()
         self.assertIn(".gitignore", files)
         self.assertIn("_inbox/n.md", files)
         self.assertNotIn(".obsidian/workspace.json", files)
+        self.assertNotIn(".obsidian/graph.json", files)
+        self.assertEqual((self.desktop / ".obsidian/graph.json").read_text(), '{"scale": "desktop"}\n')
         self.assertIn(".obsidian/app.json", files)  # shared settings stay synced
         # the desktop keeps its own layout, now ignored
         self.assertEqual((self.desktop / ".obsidian/workspace.json").read_text(), '{"layout": "desktop"}\n')
@@ -177,6 +183,20 @@ class VaultSyncTest(unittest.TestCase):
         write(self.desktop / ".obsidian/workspace.json", '{"layout": "moved"}\n')
         self.assertEqual(self.vs.run(), 0)
         self.assertEqual(self.state_json()["message"], "already in sync")
+
+    def test_prepare_after_taking_laptop_copy_of_a_conflicting_note(self):
+        # README go-live step 3, BEFORE the first prepare (a failed prepare has already committed
+        # the desktop copy, and then only a manual rebase fixes it): both sides changed TODO.md ->
+        # keep the desktop copy aside, take the laptop's, prepare runs clean, the hand merge syncs
+        self.laptop_push("01-Personal/TODO.md", "- one\n- laptop\n")
+        write(self.desktop / "01-Personal/TODO.md", "- one\n- desktop\n")
+        sh(self.desktop, "fetch", "-q", "origin")
+        laptop_copy = sh(self.desktop, "show", "origin/main:01-Personal/TODO.md")
+        write(self.desktop / "01-Personal/TODO.md", laptop_copy + "\n")  # sh() strips it
+        self.assertEqual(self.vs.prepare(apply=True), 0, self.state_json())
+        write(self.desktop / "01-Personal/TODO.md", "- one\n- laptop\n- desktop\n")  # hand merge
+        self.assertEqual(self.vs.run(), 0, self.state_json())
+        self.assertEqual(sh(self.remote, "show", "main:01-Personal/TODO.md"), "- one\n- laptop\n- desktop")
 
     def test_never_force_pushes_over_remote_history(self):
         # laptop pushes after our fetch: simulate by pushing between commit and push
