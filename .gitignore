@@ -40,6 +40,13 @@ __pycache__/
 !refiler/**
 __pycache__/
 
+# Phase 8 vault git sync (host-side timer) + its Hermes status plugin
+!vault-sync/
+!vault-sync/**
+!plugins/vault-sync/
+!plugins/vault-sync/**
+__pycache__/
+
 # Phase 7 sandbox: image, egress proxy scripts and allow-list (state in egress/ stays out)
 !sandbox/
 !sandbox/build-image.sh
