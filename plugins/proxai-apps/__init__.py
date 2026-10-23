@@ -19,6 +19,8 @@ the sandbox as an APK that ProxMobile's Apps tab installs.
   ("how would I build…?") and "quick … in the chat" are left alone. Changes and rollbacks to an
   app the PC knows (by its "(id)" from the Apps tab, or its name in the message) start the same
   way; if the app isn't clear, the model gets a hint to use the tool.
+* Deleting: "delete my <app>" asks Nathan to confirm; only a plain yes as his next message moves
+  the app's folder to apps/.trash/ (recoverable), which removes it from the Apps tab.
 """
 from __future__ import annotations
 
@@ -227,8 +229,13 @@ def _run_job(kind: str, app_id: str, request: str, name: str, code: int | None, 
             result = {"ok": ok, "summary": (cc.get("result") or "")[:800],
                       "error": None if ok else (cc.get("error") or f"build ended in state {status.get('state')}")}
             if not ok and status.get("state") not in ("failed", "built"):
-                _shell(f"proxai-app-build --status failed {shlex.quote(str(result['error'])[:200])} {d}",
-                       task_id=task_id, timeout=60)
+                if kind == "update" and status.get("last_build"):
+                    # Nothing was built (e.g. Claude Code declined the change): the last build still stands.
+                    msg = "No changes made: " + (result.get("summary") or str(result["error"]))[:180]
+                    _shell(f"proxai-app-build --status built {shlex.quote(msg)} {d}", task_id=task_id, timeout=60)
+                else:
+                    _shell(f"proxai-app-build --status failed {shlex.quote(str(result['error'])[:200])} {d}",
+                           task_id=task_id, timeout=60)
     except Exception as exc:  # never leave the lock held
         logger.exception("[proxai-apps] job failed")
         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -372,6 +379,26 @@ def is_new_app_request(text: str) -> bool:
     return bool(_APP_ASK.search(text) or _LIST_APP.search(text))
 
 
+_DELETE = re.compile(r"\b(delete|remove|get rid of|uninstall|trash|erase)\b.{0,60}\b(app|apps|it|this)\b"
+                     r"|\b(app|apps)\b.{0,40}\b(delete|remove|uninstall)\b", re.I | re.S)
+_YES = re.compile(r"^\s*(yes|yeah|yep|yup|ya|sure|ok|okay|confirm|confirmed|do it|go ahead|delete it|remove it)\b[\s,.!]*"
+                  r"(please|now|do it|go ahead)?[\s,.!]*$", re.I)
+_pending_delete: dict[str, dict] = {}   # session_id -> {"app", "name", "created"}
+_DELETE_SECS = 300
+
+
+def _delete_now(app_id: str) -> dict:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    d = f"{APPS_SANDBOX}/{app_id}"
+    r = _shell(f"mkdir -p {APPS_SANDBOX}/.trash && mv {d} {APPS_SANDBOX}/.trash/{app_id}-{stamp} && echo moved",
+               timeout=60)
+    ok = "moved" in (r.get("output") or "")
+    _last.pop(app_id, None)
+    _log({"app": app_id, "kind": "delete", "ok": ok, "trash": f".trash/{app_id}-{stamp}" if ok else None,
+          "error": None if ok else (r.get("error") or r.get("output"))})
+    return {"ok": ok, "trash": f"~/dev/proxai/apps/.trash/{app_id}-{stamp}"}
+
+
 _CHANGE_VERB = re.compile(r"\b(change|update|fix|add|remove|delete|make it|tweak|improve|rename|switch|"
                           r"replace|move|turn|let it|give it|can it)\b", re.I)
 _ROLLBACK = re.compile(r"\broll ?back\b.{0,80}?\bbuild\s+(\d+)", re.I | re.S)
@@ -415,6 +442,33 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
     if not allowed:
         return None
     text = _plain(user_message).strip()
+    sid = session_id or ""
+    pend = _pending_delete.pop(sid, None)
+    if pend and time.time() - pend["created"] < _DELETE_SECS:
+        if _YES.match(text):
+            if _job and _job["app"] == pend["app"]:
+                return {"context": f"[proxai-apps] {pend['name']} is being built right now, so it wasn't deleted. "
+                                   "Tell Nathan to ask again when the build is done."}
+            r = _delete_now(pend["app"])
+            if r["ok"]:
+                return {"context": f"[proxai-apps] Done: {pend['name']} was deleted from the PC (moved to "
+                                   f"{r['trash']}, so it can be brought back). It disappears from the Apps tab within "
+                                   "a few seconds. If it's installed on the phone, long-press its icon and choose "
+                                   "Uninstall. Tell Nathan this in one or two sentences."}
+            return {"context": f"[proxai-apps] Deleting {pend['name']} failed. Tell Nathan; nothing was removed."}
+        return {"context": f"[proxai-apps] Nathan did not confirm, so {pend['name']} was NOT deleted. Don't delete it."}
+    if _DELETE.search(text) and not _QUESTION.search(text):
+        app_id = find_app(text)
+        if app_id:
+            name = app_info(app_id)["name"]
+            _pending_delete[sid] = {"app": app_id, "name": name, "created": time.time()}
+            return {"context": f"[proxai-apps] Nathan wants to delete the app {name} ({app_id}). Do NOT call any tool. "
+                               f"Ask him exactly: \"Delete {name} from the PC? Its files go to a trash folder, so it can "
+                               "be restored. Say yes to delete.\" and stop. The system reads his next message."}
+        if any(w in text.lower() for w in (" app", "apps")):
+            names = ", ".join(f"{a['name']} ({a['app']})" for a in list_apps()) or "none"
+            return {"context": f"[proxai-apps] Nathan wants to delete an app, but it's not clear which. The PC's apps: "
+                               f"{names}. Ask him which one. Don't delete anything yourself."}
     change = change_request(text)
     if change:
         kind, app_id, code = change

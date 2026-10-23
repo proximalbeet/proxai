@@ -272,5 +272,58 @@ class AppRequestHook(Base):
         self.assertIsNone(plugin._on_pre_llm_call(session_id="s1", user_message="Build an app", parent_session_id="p"))
         self.assertEqual(self.cc.calls, [])
 
+
+class DeleteApps(Base):
+    def hook(self, text, sid="s1"):
+        return plugin._on_pre_llm_call(session_id=sid, user_message=text)
+
+    def setUp(self):
+        super().setUp()
+        plugin._pending_delete.clear()
+        make_app("pomodoro-timer", name="Pomodoro Timer")
+        plugin._shell = lambda command, task_id=None, timeout=120: (
+            self.shell.append(command) or {"output": "moved" if command.startswith("mkdir -p /workspace/proxai/apps/.trash") else "", "exit_code": 0})
+
+    def test_delete_asks_then_moves_to_trash_on_yes(self):
+        r = self.hook("remove or delete my pomodoro timer app entirely")
+        self.assertIn("Delete Pomodoro Timer from the PC?", r["context"])
+        self.assertEqual(self.cc.calls, [])            # not treated as a change
+        self.assertEqual(self.shell, [])
+        r = self.hook("yes")
+        self.assertIn("was deleted from the PC", r["context"])
+        self.assertIn("mv /workspace/proxai/apps/pomodoro-timer /workspace/proxai/apps/.trash/pomodoro-timer-", self.shell[-1])
+
+    def test_anything_but_yes_cancels(self):
+        self.hook("delete my pomodoro timer app")
+        r = self.hook("wait, no")
+        self.assertIn("NOT deleted", r["context"])
+        self.assertEqual(self.shell, [])
+        self.assertIsNone(self.hook("yes"))            # the request is gone
+
+    def test_other_sessions_cant_confirm(self):
+        self.hook("delete my pomodoro timer app")
+        self.hook("yes", sid="other")
+        self.assertEqual(self.shell, [])
+
+    def test_unclear_app_asks_which(self):
+        r = self.hook("delete the app")
+        self.assertIn("not clear which", r["context"])
+        self.assertIn("Pomodoro Timer (pomodoro-timer)", r["context"])
+
+    def test_failed_update_with_no_build_restores_ready(self):
+        self.cc.ok = False
+        def declined(args, task_id=None, session_id=None):
+            self.cc.calls.append(args)
+            return json.dumps({"ok": False, "result": "", "error": "I didn't change anything."})
+        self.cc._handle_claude_code = declined
+        d = APPS / "pomodoro-timer"
+        st = json.loads((d / "status.json").read_text())
+        st["last_build"] = {"code": 1}
+        st["state"] = "queued"
+        (d / "status.json").write_text(json.dumps(st))
+        plugin._start("update", "pomodoro-timer", "make it purple", "Pomodoro Timer", None, None)
+        self.wait_idle()
+        self.assertTrue(any("--status built 'No changes made" in c for c in self.shell), self.shell)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
