@@ -1,0 +1,8 @@
+name: proxai-pc-stats
+version: "0.1.0"
+description: "The PC's live temps and usage for ProxAI chat. Reads the thermal watch (~/.local/state/proxai/thermal-watch: latest.json, alerts.jsonl). A pre_llm_call hook adds the readings when Nathan asks about temps/GPU/CPU/RAM; tool pc_stats and command /pc give the same. Read-only."
+author: "prox"
+provides_tools:
+  - pc_stats
+provides_hooks:
+  - pre_llm_call

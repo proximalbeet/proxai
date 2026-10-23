@@ -316,5 +316,44 @@ class RealSystemdJob(unittest.TestCase):
         self.assertNotIn("private", probe.stdout)
 
 
+class PointsAtVaultWrite(Base):
+    """The local model can't see vault_write (hidden behind tool_search), so it tries write_file."""
+    def block(self, path, tool="write_file"):
+        return plugin._on_pre_tool_call(tool_name=tool, args={"path": path, "content": "x"})
+
+    def test_write_file_to_read_only_folder_is_redirected(self):
+        r = self.block("/workspace/vault/05-Brain-Dump/cron-idea.md")
+        self.assertEqual(r["action"], "block")
+        self.assertIn('"name": "vault_write"', r["message"])
+        self.assertIn('"path": "05-Brain-Dump/cron-idea.md"', r["message"])
+        self.assertIn("written right away", r["message"])
+        r = self.block("/workspace/vault/04-Knowledge/go.md", tool="patch")
+        self.assertIn("needs Nathan's permission", r["message"])
+
+    def test_writable_folders_other_tools_and_paths_pass(self):
+        self.assertIsNone(self.block("/workspace/vault/_inbox/x.md"))
+        self.assertIsNone(self.block("/workspace/vault/10-Wiki/x.md"))
+        self.assertIsNone(self.block("/workspace/proxai/notes.md"))
+        self.assertIsNone(plugin._on_pre_tool_call(tool_name="read_file",
+                                                   args={"path": "/workspace/vault/04-Knowledge/rust.md"}))
+
+    def test_never_and_channel_cases(self):
+        self.assertIn("never", self.block("/workspace/vault/07-Security/x.md")["message"])
+        self.env["HERMES_SESSION_CHAT_TYPE"] = "group"
+        self.env["HERMES_SESSION_CHAT_NAME"] = "general-chat"
+        self.assertIn("_inbox", self.block("/workspace/vault/04-Knowledge/go.md")["message"])
+        self.assertIn("vault_write", self.block("/workspace/vault/05-Brain-Dump/x.md")["message"])
+
+    def test_save_requests_get_a_hint(self):
+        for msg in ("add that to brain dump as a feature to fix", "save this to my vault",
+                    "Put a note in the wiki about rust lifetimes"):
+            r = plugin._on_pre_llm_call(session_id="s1", user_message=msg)
+            self.assertIn("vault_write", r["context"], msg)
+        for msg in ("what's in my brain dump?", "yes", "save the file in the repo"):
+            self.assertIsNone(plugin._on_pre_llm_call(session_id="s1", user_message=msg), msg)
+        self.env["HERMES_SESSION_CHAT_TYPE"] = "group"
+        self.assertIsNone(plugin._on_pre_llm_call(session_id="s1", user_message="save this to my vault"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -25,6 +25,7 @@ the sandbox as an APK that ProxMobile's Apps tab installs.
 from __future__ import annotations
 
 import contextvars
+import difflib
 import importlib.util
 import json
 import logging
@@ -388,6 +389,10 @@ def is_new_app_request(text: str) -> bool:
 
 _DELETE = re.compile(r"\b(delete|remove|get rid of|uninstall|trash|erase)\b.{0,60}\b(app|apps|it|this)\b"
                      r"|\b(app|apps)\b.{0,40}\b(delete|remove|uninstall)\b", re.I | re.S)
+_DELETE_VERB = re.compile(r"\b(delete|remove|get rid of|uninstall|trash|erase)\b", re.I)
+# "remove the reset button from my pomodoro app" is a change, not a delete ("... from the PC" still is).
+_PART_REMOVAL = re.compile(r"\b(remove|delete|get rid of|take)\b.{1,60}?\bfrom\b"
+                           r"(?!\s+(the\s+|my\s+)?(pc|computer|phone|desktop|apps tab)\b)", re.I | re.S)
 _YES = re.compile(r"^\s*(yes|yeah|yep|yup|ya|sure|ok|okay|confirm|confirmed|do it|go ahead|delete it|remove it)\b[\s,.!]*"
                   r"(please|now|do it|go ahead)?[\s,.!]*$", re.I)
 _pending_delete: dict[str, dict] = {}   # session_id -> {"app", "name", "created"}
@@ -424,6 +429,27 @@ def find_app(text: str) -> str | None:
         ident = " " + a["app"].replace("-", " ") + " "
         if (len(name.strip()) >= 3 and name in low) or ident in low:
             hits.append(a["app"])
+    return hits[0] if len(hits) == 1 else None
+
+
+_GENERIC_WORDS = {"app", "apps", "timer", "tracker", "list", "log", "monitor", "counter", "notes", "note", "game",
+                  "calculator", "the", "my", "pc", "phone", "simple", "basic", "tool"}
+
+
+def _key_words(s: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) >= 4 and w not in _GENERIC_WORDS}
+
+
+def find_app_loose(text: str) -> str | None:
+    """find_app, then typo-tolerant word matching ("delete pomdoro" -> Pomodoro Timer). Only used where
+    Nathan still has to confirm (deleting), never to start a build."""
+    exact = find_app(text)
+    if exact:
+        return exact
+    said = _key_words(text)
+    hits = [a["app"] for a in list_apps()
+            if any(difflib.SequenceMatcher(None, k, w).ratio() >= 0.8
+                   for k in _key_words(f"{a['name']} {a['app'].replace('-', ' ')}") for w in said)]
     return hits[0] if len(hits) == 1 else None
 
 
@@ -464,8 +490,9 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
                                    "Uninstall. Tell Nathan this in one or two sentences."}
             return {"context": f"[proxai-apps] Deleting {pend['name']} failed. Tell Nathan; nothing was removed."}
         return {"context": f"[proxai-apps] Nathan did not confirm, so {pend['name']} was NOT deleted. Don't delete it."}
-    if _DELETE.search(text) and not _QUESTION.search(text):
-        app_id = find_app(text)
+    wants_delete = (_DELETE.search(text) or (_DELETE_VERB.search(text) and find_app_loose(text)))
+    if wants_delete and not _QUESTION.search(text) and not _PART_REMOVAL.search(text):
+        app_id = find_app_loose(text)
         if app_id:
             name = app_info(app_id)["name"]
             _pending_delete[sid] = {"app": app_id, "name": name, "created": time.time()}

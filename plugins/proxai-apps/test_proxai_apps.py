@@ -310,6 +310,31 @@ class DeleteApps(Base):
         self.assertIn("not clear which", r["context"])
         self.assertIn("Pomodoro Timer (pomodoro-timer)", r["context"])
 
+    def test_short_and_misspelled_names(self):
+        # 10-23 on the phone: "delete pomodoro app" and "now uninstall pomdoro timer" weren't recognised.
+        for msg in ("delete pomodoro app", "now uninstall pomdoro timer", "get rid of the pomodoro"):
+            plugin._pending_delete.clear()
+            r = self.hook(msg)
+            self.assertIn("Delete Pomodoro Timer from the PC?", r["context"], msg)
+        self.assertEqual(self.shell, [])
+        self.assertEqual(self.cc.calls, [])
+
+    def test_removing_a_part_is_a_change_not_a_delete(self):
+        plugin._pending_delete.clear()
+        r = self.hook("remove the reset button from my pomodoro timer app")
+        self.assertNotIn("Delete Pomodoro Timer", (r or {}).get("context", ""))
+        self.assertEqual(plugin._pending_delete, {})
+        self.wait_idle()
+        self.assertEqual(len(self.cc.calls), 1)                 # started an update instead
+        make_app("pomodoro-timer", name="Pomodoro Timer")      # (the fake builder renamed it)
+        r = self.hook("Delete my Pomodoro Timer app (pomodoro-timer) from the PC.")
+        self.assertIn("Delete Pomodoro Timer from the PC?", r["context"])
+
+    def test_loose_match_never_starts_builds(self):
+        make_app("water-log", name="Water Log")
+        self.assertIsNone(plugin.change_request("add a pomdoro button"))   # typo: no build started
+        self.assertIsNone(plugin.find_app_loose("delete the timer"))         # generic word only
+
     def test_failed_update_with_no_build_restores_ready(self):
         self.cc.ok = False
         def declined(args, task_id=None, session_id=None):

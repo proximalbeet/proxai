@@ -88,4 +88,6 @@ __pycache__/
 # Phase 15 ProxAI apps plugin
 !plugins/proxai-apps/
 !plugins/proxai-apps/**
+!plugins/proxai-pc-stats/
+!plugins/proxai-pc-stats/**
 __pycache__/

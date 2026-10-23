@@ -322,10 +322,68 @@ def is_yes(user_message) -> bool:
     return bool(text) and len(text) <= 60 and not _NO_WORDS.search(text) and bool(_YES.match(text))
 
 
-def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
-    p = _pending.get(session_id or "")
-    if not p or parent_session_id:
+# Hermes hides plugin tools behind tool_search, and the local model rarely looks there. So it
+# reaches for write_file on the read-only vault. These two hooks point it at vault_write instead.
+_CONTAINER_VAULT = "/workspace/vault/"
+_CONTAINER_WRITABLE = ("_inbox", "10-Wiki")       # mounted read-write in the container already
+_FILE_TOOLS = {"write_file", "patch"}
+_SAVE_ASK = re.compile(
+    r"\b(add|save|put|write|jot|note|log|capture|dump|file|store|record)\b.{0,80}?"
+    r"\b(brain ?dump|vault|wiki|inbox|obsidian|my notes|a note|notes? folder)\b", re.S)
+
+
+def _call_example(rel: str) -> str:
+    args = json.dumps({"action": "write", "path": rel, "content": "<the note in Markdown>"})
+    return f'tool_call({{"calls": [{{"name": "vault_write", "arguments": {args}}}]}})'
+
+
+def _on_pre_tool_call(tool_name: str = "", args=None, **_kwargs):
+    """write_file/patch into a read-only vault folder: block it and say how to use vault_write."""
+    if tool_name not in _FILE_TOOLS or not isinstance(args, dict):
         return None
+    raw = str(args.get("path") or args.get("file_path") or "")
+    if not raw.startswith(_CONTAINER_VAULT):
+        return None
+    try:
+        rel = rules.normalise(raw)
+    except rules.Refused:
+        return None
+    if rel.split("/")[0] in _CONTAINER_WRITABLE:
+        return None
+    rule = rules.rule_for(rel, rules.load_policy())
+    if rule == "never":
+        return {"action": "block", "message": f"{rel} can never be written by ProxAI. Tell Nathan."}
+    _where_now, can_ask = _where()
+    if rule == "ask" and not can_ask:
+        return {"action": "block", "message": f"The vault is read-only here, and {rel.split('/')[0]} needs "
+                                              "Nathan's yes, which only works in his DMs or the phone app. "
+                                              "Save it to _inbox/ instead (write_file works there)."}
+    after = ("It's written right away." if rule == "free" else
+             "That folder needs Nathan's permission: vault_write returns a question, ask him exactly that "
+             "and stop.")
+    return {"action": "block",
+            "message": f"Not written: the vault is read-only in the sandbox. Save notes with the vault_write "
+                       f"tool instead: {_call_example(rel)}. {after} Never say a note was saved unless "
+                       "vault_write returns ok."}
+
+
+def _save_hint(user_message) -> dict | None:
+    """Nathan asks to save something to the vault: name the tool so the model doesn't guess."""
+    text = _plain_text(user_message)
+    if not text or not _SAVE_ASK.search(text) or not _where()[1]:
+        return None
+    return {"context": "[vault-write] To save this in the vault use the vault_write tool (not write_file, the "
+                       f"vault is read-only in the sandbox), e.g. {_call_example('05-Brain-Dump/<short-name>.md')}. "
+                       "05-Brain-Dump, 10-Wiki and _inbox are written right away; other folders need his yes. "
+                       "Report what the result says."}
+
+
+def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
+    if parent_session_id:
+        return None
+    p = _pending.get(session_id or "")
+    if not p:
+        return _save_hint(user_message)
     if time.time() - p["created"] > _CONFIRM_SECS:
         _pending.pop(session_id, None)
         return {"context": f"[vault-write] The request to write {p['path']} expired; nothing was written."}
@@ -377,4 +435,5 @@ def register(ctx) -> None:
                       emoji="📝", description="Write vault notes; folders outside _inbox/brain dump/wiki need Nathan's yes")
     ctx.register_command("vault-writes", _cmd_vault_writes, description="Vault write rules and the last writes")
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
