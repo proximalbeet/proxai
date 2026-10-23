@@ -353,7 +353,10 @@ _APP_CHANGE = re.compile(
     re.I | re.S)
 # "a grocery list I can check off" is an app; "make a list of groceries" is not.
 _LIST_APP = re.compile(r"\b(build|make|create)\b.{0,40}\blist\b.{0,20}\b(i|we|you) can\b", re.I | re.S)
-_IN_CHAT = re.compile(r"\b(quick|in (the|this) chat|right here|html (file|page)?)\b", re.I)
+# Nathan wants the HTML right in the chat, not a built APK. Not plain "quick": 10-23 "Build me a
+# standalone pomodoro app. Quick question, ..." was skipped because of it.
+_IN_CHAT = re.compile(r"\b(in (the|this) chat|right here|(as|in) (an? )?html( file| page)?|html (file|page)|"
+                      r"quick (html|web ?page|chat app))\b", re.I)
 HINT = ("[proxai-apps] This is an app request from Nathan's phone. Use the `proxai_app` tool: it is "
         "behind tool_search (search for \"proxai_app\", then call it with tool_call). create = new app "
         "(short `name` + the full request with every detail); update / rollback = an app made that way "

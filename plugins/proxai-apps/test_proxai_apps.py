@@ -349,6 +349,19 @@ class DeleteApps(Base):
         self.assertEqual(json.loads((APPS / "tip-calc" / "status.json").read_text())["state"], "built")
         self.assertNotIn("model", self.cc.calls[-1])
 
+    def test_quick_question_isnt_an_in_chat_app(self):
+        # 10-23: "quick question" made the hook skip a real APK request.
+        msg = "Build me a standalone pomodoro app. Quick question, will both this apk and the old one stay?"
+        self.assertTrue(plugin.is_new_app_request(msg))
+        # The phone's time note in front of the message doesn't get in the way.
+        r = plugin._on_pre_llm_call(session_id="s9", user_message="[Phone time: Friday 2026-10-23 12:29 "
+                                    "(America/Detroit); by voice]\nbuild me a tip calculator")
+        self.assertIn("ALREADY", r["context"])
+        self.wait_idle()
+        for msg in ("make me a quick html page with a timer right here", "build a timer in the chat",
+                    "make a tip calculator as an html file"):
+            self.assertFalse(plugin.is_new_app_request(msg), msg)
+
     def test_failed_update_with_no_build_restores_ready(self):
         self.cc.ok = False
         def declined(args, task_id=None, session_id=None):
