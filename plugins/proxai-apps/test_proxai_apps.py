@@ -187,31 +187,56 @@ class UpdateRollbackStatus(Base):
 
 
 
-class AppRequestHint(Base):
-    def hint(self, text):
-        r = plugin._on_pre_llm_call(session_id="s1", user_message=text)
-        return bool(r and "proxai_app" in r["context"])
+class AppRequestHook(Base):
+    def hook(self, text):
+        return plugin._on_pre_llm_call(session_id="s1", user_message=text)
 
-    def test_app_requests_get_the_hint(self):
-        for text in ("Build a pomodoro timer with a progress ring", "make me a habit tracker",
-                     "Can you create an app that tracks my water?", "Make a grocery list I can check off",
-                     "build a workout interval timer that beeps", "make me a PC monitor app",
-                     "Change my Water Log app (water-log): add a 750 ml button",
-                     "roll back my tip calc app to build 1",
-                     [{"type": "text", "text": "Build me a calculator"}]):
-            self.assertTrue(self.hint(text), text)
+    def test_names(self):
+        for text, name in (("Build a pomodoro timer with a progress ring", "Pomodoro Timer"),
+                           ("make me a habit tracker", "Habit Tracker"),
+                           ("Can you build me a PC monitor app?", "PC Monitor"),
+                           ("Make a grocery list I can check off", "Grocery List"),
+                           ("create an app that tracks my water", "")):
+            self.assertEqual(plugin.guess_name(text), name, text)
 
-    def test_other_messages_dont(self):
-        for text in ("What's the weather tomorrow?", "remind me in 20 minutes to check the oven",
-                     "make me a quick timer right here in the chat", "how does the app builder work?",
-                     "what did we build today?", "turn on server mode", "make a list of groceries for tomorrow"):
-            self.assertFalse(self.hint(text), text)
+    def test_new_app_request_starts_the_build_itself(self):
+        r = self.hook("Build a pomodoro timer with a progress ring")
+        self.assertIn("ALREADY started", r["context"])
+        self.assertIn("app id pomodoro-timer", r["context"])
+        self.wait_idle()
+        task = self.cc.calls[0]["args"]["task"]
+        self.assertIn("Build a pomodoro timer with a progress ring", task)
+        self.assertIn("Name: Pomodoro Timer", task)
+        self.assertEqual(len(self.cc.calls), 1)
+
+    def test_second_request_while_building_says_busy(self):
+        self.cc.delay = 5
+        self.hook("make me a habit tracker")
+        r = self.hook("make me a water tracker")
+        self.assertIn("can't start yet", r["context"])
+        self.cc.release.set()
+        self.wait_idle()
+        self.assertEqual(len(self.cc.calls), 1)
+
+    def test_changes_get_a_hint_not_a_build(self):
+        r = self.hook("Change my Water Log app (water-log): add a 750 ml button")
+        self.assertIn("proxai_app", r["context"])
+        self.assertNotIn("ALREADY", r["context"])
+        self.assertEqual(self.cc.calls, [])
+
+    def test_left_alone(self):
+        for text in ("How would I build an app that tracks water?", "What's the weather tomorrow?",
+                     "make me a quick timer right here in the chat", "remind me in 20 minutes to check the oven",
+                     "make a list of groceries for tomorrow", "turn on server mode"):
+            self.assertIsNone(self.hook(text), text)
+        self.assertEqual(self.cc.calls, [])
 
     def test_only_phone_and_cli(self):
         self.env["HERMES_SESSION_PLATFORM"] = "discord"
-        self.assertFalse(self.hint("Build a pomodoro timer"))
+        self.assertIsNone(self.hook("Build a pomodoro timer"))
         self.env["HERMES_SESSION_PLATFORM"] = "api_server"
         self.assertIsNone(plugin._on_pre_llm_call(session_id="s1", user_message="Build an app", parent_session_id="p"))
+        self.assertEqual(self.cc.calls, [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

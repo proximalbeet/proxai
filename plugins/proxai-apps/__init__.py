@@ -12,9 +12,12 @@ the sandbox as an APK that ProxMobile's Apps tab installs.
 * The phone reads progress and downloads APKs from the apps server (ProxMobile
   server/proxai_apps_server.py), which reads the same folder.
 * Every job is logged to ~/.local/state/proxai/apps.log (JSONL).
-* Hermes keeps plugin tools behind tool_search, and the local model doesn't go looking (10-22:
-  it wrote a Pomodoro app into the chat instead). A ``pre_llm_call`` hook therefore tells the
-  model about ``proxai_app`` whenever a phone/CLI message asks for an app.
+* Hermes keeps plugin tools behind tool_search, and the local model doesn't use them reliably
+  (10-22: it wrote a Pomodoro app into the chat, then with a hint said "I'll build this" and
+  stopped). So for a clear NEW-app request from the phone/CLI, the ``pre_llm_call`` hook starts the
+  build itself and tells the model it's already running; the model only has to confirm. Questions
+  ("how would I build…?") and "quick … in the chat" are left alone. Changes/rollbacks to existing
+  apps still go through the tool, with a hint.
 """
 from __future__ import annotations
 
@@ -344,16 +347,51 @@ def _plain(user_message) -> str:
     return re.sub(r"\[[^\]]*\]", " ", str(user_message or ""))
 
 
+_QUESTION = re.compile(r"^\s*(how|what|why|which|when|where|should|would it|is it|are|do|does|did|explain|tell me)\b", re.I)
+_LEAD = re.compile(r"^\s*(hey\s+)?(proxai[,:]?\s+)?((can|could|would|will) you\s+)?(please\s+)?"
+                   r"(build|make|create|generate|code|design|write)\s+(me\s+|us\s+)?((a|an|my|the|some)\s+)?", re.I)
+_CUT = re.compile(r"\s+(with|that|which|for|to|where|so|and|using|so that|(i|we|you) can)\b|[.,!?;:(]", re.I)
+
+
+def guess_name(text: str) -> str:
+    """'Build a pomodoro timer with a progress ring' -> 'Pomodoro Timer' ('' if unclear)."""
+    rest = _LEAD.sub("", text.strip(), count=1)
+    rest = _CUT.split(rest, maxsplit=1)[0]
+    rest = re.sub(r"\b(app|application|apk)\b", "", rest, flags=re.I)
+    words = [w for w in re.findall(r"[A-Za-z0-9']+", rest)][:4]
+    name = " ".join(w if w.isupper() else w.capitalize() for w in words)
+    return name[:40] if len(name) >= 3 else ""
+
+
+def is_new_app_request(text: str) -> bool:
+    if _IN_CHAT.search(text) or _QUESTION.search(text):
+        return False
+    if _APP_CHANGE.search(text) and not re.search(r"\b(new|another)\b", text, re.I):
+        return False   # a change to an existing app: the model picks which one
+    return bool(_APP_ASK.search(text) or _LIST_APP.search(text))
+
+
 def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
     if parent_session_id:
         return None
     _where_now, allowed = _where()
     if not allowed:
         return None
-    text = _plain(user_message)
-    if _IN_CHAT.search(text):
-        return None   # Nathan asked for a quick in-chat app
-    if _APP_ASK.search(text) or _APP_CHANGE.search(text) or _LIST_APP.search(text):
+    text = _plain(user_message).strip()
+    if is_new_app_request(text):
+        name = guess_name(text)
+        app_id = new_id(name or text[:40])
+        err = _start("create", app_id, text[:MAX_REQUEST], name, None, None)
+        if err:
+            return {"context": f"[proxai-apps] Nathan asked for a new app, but it can't start yet: {err} "
+                               "Tell him that in one sentence. Don't write the app here."}
+        _log({"app": app_id, "kind": "create", "by": "hook", "request": text[:500], "started": True})
+        return {"context": f"[proxai-apps] Done for you: the app builder (Claude Code on the PC) has ALREADY "
+                           f"started building this as \"{name or app_id}\" (app id {app_id}). Do NOT write the app "
+                           "or any HTML, and do NOT call proxai_app create. Reply in one or two short sentences: "
+                           "it's building now, takes a few minutes, and progress plus the Install button are in "
+                           "ProxMobile's Apps tab."}
+    if _APP_CHANGE.search(text) and not _IN_CHAT.search(text) and not _QUESTION.search(text):
         return {"context": HINT}
     return None
 
