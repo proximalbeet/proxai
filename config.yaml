@@ -540,6 +540,7 @@ platform_toolsets:
     - memory
     - proxai_calendar
     - proxai_mode
+    - proxai_vault
     - session_search
     - skills
     - terminal
@@ -565,6 +566,7 @@ platform_toolsets:
     - memory
     - proxai_calendar
     - proxai_mode
+    - proxai_vault
     - session_search
     - skills
     - terminal
@@ -672,6 +674,7 @@ plugins:
     - homeassistant
     - proxai-calendar
     - proxai-mode
+    - proxai-vault-write
   disabled: []
 _left_core_installed:
   - homeassistant

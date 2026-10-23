@@ -77,3 +77,8 @@ __pycache__/
 !plugins/proxai-mode/**
 !voice/test_tts_mode.py
 __pycache__/
+
+# Vault writes with Nathan's permission (policy.json = folder rules)
+!plugins/proxai-vault-write/
+!plugins/proxai-vault-write/**
+__pycache__/
