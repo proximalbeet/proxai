@@ -678,6 +678,7 @@ plugins:
     - proxai-vault-write
     - proxai-apps
     - proxai-pc-stats
+    - proxai-context
   disabled: []
 _left_core_installed:
   - homeassistant

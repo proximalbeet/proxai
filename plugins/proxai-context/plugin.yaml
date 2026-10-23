@@ -1,0 +1,6 @@
+name: proxai-context
+version: "0.1.0"
+description: "Saves the real conversation size (latest model call's prompt tokens + context window) per phone session to ~/.local/state/proxai/context/sessions.json, for ProxMobile's token counter (served by the apps server at /apps/v1/pc/context). No message text."
+author: "prox"
+provides_hooks:
+  - post_api_request

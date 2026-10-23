@@ -90,4 +90,6 @@ __pycache__/
 !plugins/proxai-apps/**
 !plugins/proxai-pc-stats/
 !plugins/proxai-pc-stats/**
+!plugins/proxai-context/
+!plugins/proxai-context/**
 __pycache__/
