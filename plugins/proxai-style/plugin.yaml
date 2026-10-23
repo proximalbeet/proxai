@@ -1,0 +1,6 @@
+name: proxai-style
+version: "0.1.0"
+description: "How ProxAI answers, added per message so the local model follows it: 'how do I / how to' questions get a brief explanation, not tool runs. Everywhere."
+author: "prox"
+provides_hooks:
+  - pre_llm_call
