@@ -35,6 +35,7 @@ import shlex
 import threading
 import time
 from pathlib import Path
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +260,14 @@ def _run_job(kind: str, app_id: str, request: str, name: str, code: int | None, 
         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     result["duration_s"] = round(time.time() - started)
     _last[app_id] = {"kind": kind, **{k: v for k, v in result.items() if v is not None}}
+    label = name or app_id
+    if kind != "rollback":
+        if result.get("ok"):
+            notify(f"📱 {label} is ready", "Install or update it from the Apps tab.")
+        elif result.get("error") == "Stopped by Nathan":
+            notify(f"📱 {label}: build stopped", "")
+        else:
+            notify(f"📱 {label}: build failed", str(result.get("error") or "")[:300])
     _log({"app": app_id, "kind": kind, "by": who, "request": request[:500], **result})
     with _lock:
         _job = None
@@ -525,14 +534,114 @@ def stop_build(task_id=None) -> str | None:
     return job["name"]
 
 
-def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
+# ---- scheduled jobs and the queue the gateway works through ------------------------------------
+
+QUEUE = LOG.parent / "apps-queue"
+_schedule_module = None
+
+
+def _schedule():
+    """The proxai-schedule plugin (time phrases, approved phone jobs, the notice feed)."""
+    global _schedule_module
+    if _schedule_module is None:
+        spec = importlib.util.spec_from_file_location("proxai_apps_schedule", HERE.parent / "proxai-schedule" / "__init__.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _schedule_module = mod
+    return _schedule_module
+
+
+def notify(title: str, text: str = "") -> None:
+    try:
+        _schedule().notices.post(title, text, kind="app")
+    except Exception as exc:
+        logger.warning("[proxai-apps] notice failed: %s", exc)
+
+
+def enqueue(op: dict) -> None:
+    """Cron jobs run in their own short-lived process; the gateway (always running) does the work."""
+    QUEUE.mkdir(parents=True, exist_ok=True)
+    f = QUEUE / f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{len(op.get('app', ''))}.json"
+    f.write_text(json.dumps(op), encoding="utf-8")
+
+
+def work_queue() -> None:
+    """One pass: start queued builds (one at a time) and deletes; leave builds for later when busy."""
+    if not QUEUE.is_dir():
+        return
+    for f in sorted(QUEUE.glob("*.json")):
+        try:
+            op = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            f.unlink(missing_ok=True)
+            continue
+        if op.get("op") == "delete":
+            r = _delete_now(op["app"])
+            notify(f"🗑️ {op.get('name') or op['app']} deleted" if r["ok"] else f"🗑️ Couldn't delete {op['app']}",
+                   "Scheduled delete" + (f"; files in {r['trash']}" if r["ok"] else ""))
+            f.unlink(missing_ok=True)
+            continue
+        err = _start(op["kind"], op["app"], op.get("request", ""), op.get("name", ""), op.get("code"), None)
+        if err:
+            return          # something is building; try again next pass
+        _log({"app": op["app"], "kind": op["kind"], "by": "schedule", "request": op.get("request", "")[:500],
+              "started": True})
+        f.unlink(missing_ok=True)
+
+
+def _queue_loop() -> None:
+    while True:
+        time.sleep(20)
+        try:
+            work_queue()
+        except Exception as exc:
+            logger.warning("[proxai-apps] queue failed: %s", exc)
+
+
+def _in_gateway() -> bool:
+    import sys
+    return "gateway" in sys.argv and "run" in sys.argv
+
+
+def _on_scheduled_run(text: str) -> dict | None:
+    """A cron run of a job Nathan approved when he scheduled it: do the app part without asking."""
+    if _DELETE_VERB.search(text) and not _PART_REMOVAL.search(text):
+        app_id = find_app_loose(text)
+        if app_id:
+            enqueue({"op": "delete", "app": app_id, "name": app_info(app_id)["name"]})
+            return {"context": f"[proxai-apps] Approved scheduled job: {app_info(app_id)['name']} is being deleted "
+                               "from the PC now (files go to the trash folder). Reply in one sentence."}
+    change = change_request(text)
+    if change:
+        kind, app_id, code = change
+        enqueue({"op": "build", "kind": kind, "app": app_id, "name": app_info(app_id)["name"], "code": code,
+                 "request": "" if kind == "rollback" else text[:MAX_REQUEST]})
+        return {"context": f"[proxai-apps] Approved scheduled job: Claude Code is {kind}ing {app_info(app_id)['name']} "
+                           "now; his phone gets a notice when it's ready. Reply in one sentence. Don't write code."}
+    if is_new_app_request(text):
+        name = guess_name(text)
+        app_id = new_id(name or text[:40])
+        enqueue({"op": "build", "kind": "create", "app": app_id, "name": name, "request": text[:MAX_REQUEST]})
+        return {"context": f"[proxai-apps] Approved scheduled job: Claude Code is building \"{name or app_id}\" now; "
+                           "his phone gets a notice when it's ready. Reply in one sentence. Don't write code."}
+    return None
+
+
+def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, task_id=None, **_kwargs):
     if parent_session_id:
         return None
+    text = _plain(user_message).strip()
+    if str(task_id or "").startswith("cron:"):
+        return _on_scheduled_run(text) if _schedule().is_approved_cron(task_id) else None
     _where_now, allowed = _where()
     if not allowed:
         return None
-    text = _plain(user_message).strip()
     sid = session_id or ""
+    try:
+        if _schedule().parse_request(text, datetime.datetime.now()):
+            return None     # "... at 2am": proxai-schedule asks to schedule it instead
+    except Exception as exc:
+        logger.warning("[proxai-apps] schedule check failed: %s", exc)
     keys = _session_keys(sid) or {"cli"}
     build = next((_pending_build[k] for k in keys if k in _pending_build), None)
     for k in keys:
@@ -610,3 +719,5 @@ def register(ctx) -> None:
     ctx.register_tool(name="proxai_app", toolset="proxai_apps", schema=SCHEMA, handler=_handle, emoji="📱",
                       description="Build phone apps (APKs) with Claude Code; installed from ProxMobile's Apps tab")
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    if _in_gateway() and os.getenv("PROXAI_APPS_QUEUE", "on") != "off":
+        threading.Thread(target=_queue_loop, name="proxai-apps-queue", daemon=True).start()

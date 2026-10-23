@@ -682,6 +682,7 @@ plugins:
     - proxai-github
     - proxai-style
     - proxai-wiki
+    - proxai-schedule
   disabled: []
 _left_core_installed:
   - homeassistant

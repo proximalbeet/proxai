@@ -1,0 +1,7 @@
+name: proxai-schedule
+version: "0.1.0"
+description: "Scheduled jobs from Nathan's phone: 'delete X at 2am', 'every morning at 8 summarize my calendar'. The hook reads the time, asks for a yes, creates the Hermes cron job itself; the yes also approves the action (the app builder runs approved jobs). Results go to the phone through the notice feed (notices.py, served at /apps/v1/pc/notices). 'what's scheduled', 'cancel the ... job'."
+author: "prox"
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call

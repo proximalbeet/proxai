@@ -393,6 +393,8 @@ def run_update(trigger: str, task_id=None) -> dict:
             summary["auto_written"] = len(r.get("written", []))
             if r.get("ok"):
                 _mark(state, found["auto"], "done")
+                notify(f"📚 Wiki updated: {summary['auto_written']} pages",
+                       f"From {len(found['auto'])} new or changed notes. Say \"undo the last wiki update\" to undo.")
             else:
                 summary["auto_error"] = r.get("error")
         else:
@@ -411,6 +413,9 @@ def run_update(trigger: str, task_id=None) -> dict:
                                "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "announced": False}
             _mark(state, found["review"], "pending")
             summary["review_pages"] = len(changes("main", "review", task_id))
+            notify("📚 Wiki update waiting for your OK",
+                   f"{len(found['review'])} brain-dump/daily/focus notes. Say yes in chat, or \"approve\" / "
+                   f"\"reject the wiki update\".\n{digest[:600]}")
         elif cc.get("ok"):
             _mark(state, found["review"], "done")
             sh("git branch -D review >/dev/null 2>&1 || true", task_id)
@@ -563,13 +568,52 @@ def _started(err: str | None, what: str) -> dict:
                        "Don't call any tool. Tell Nathan in one sentence; he can ask \"wiki status\" later."}
 
 
-def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
+_schedule_module = None
+
+
+def _schedule():
+    """The proxai-schedule plugin: time phrases, approved phone jobs, the phone notice feed."""
+    global _schedule_module
+    if _schedule_module is None:
+        spec = importlib.util.spec_from_file_location("proxai_wiki_schedule", HERE.parent / "proxai-schedule" / "__init__.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _schedule_module = mod
+    return _schedule_module
+
+
+def notify(title: str, text: str = "") -> None:
+    try:
+        _schedule().notices.post(title, text, kind="wiki")
+    except Exception as exc:
+        logger.warning("[wiki] notice failed: %s", exc)
+
+
+def _request_file() -> Path:
+    return STATE_DIR / "wiki" / "run-request"
+
+
+def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, task_id=None, **_kwargs):
     if parent_session_id:
+        return None
+    text = _plain(user_message)
+    if str(task_id or "").startswith("cron:"):
+        # An approved phone job ("update the wiki every night at 3"): the gateway runs it (this process
+        # is a short-lived cron worker).
+        if _RUN.search(text) and _schedule().is_approved_cron(task_id):
+            _request_file().parent.mkdir(parents=True, exist_ok=True)
+            _request_file().write_text(time.strftime("%Y-%m-%dT%H:%M:%S"), encoding="utf-8")
+            return {"context": "[wiki] Approved scheduled job: the wiki update starts on the PC within a minute. "
+                               "Reply in one sentence."}
         return None
     _where_now, allowed = _where()
     if not allowed:
         return None
-    text = _plain(user_message)
+    try:
+        if _schedule().parse_request(text, dt.datetime.now()):
+            return None     # "... every night at 3": proxai-schedule asks to schedule it
+    except Exception as exc:
+        logger.warning("[wiki] schedule check failed: %s", exc)
     sid = session_id or ""
     asked = _asked.pop(sid, 0)
     if asked and time.time() - asked < 900 and _YES.match(text) and load_state().get("review"):
@@ -653,6 +697,9 @@ def _nightly_loop() -> None:
                 state["last_nightly"] = now.date().isoformat()
                 save_state(state)
                 _run_in_background(run_update, "nightly", "nightly")
+            elif _request_file().exists() and _job is None:
+                _request_file().unlink(missing_ok=True)
+                _run_in_background(run_update, "scheduled", "scheduled")
         except Exception as exc:
             logger.warning("[wiki] nightly check failed: %s", exc)
 
@@ -661,5 +708,7 @@ def register(ctx) -> None:
     ctx.register_tool(name="proxai_wiki", toolset="proxai_wiki", schema=SCHEMA, handler=_handle, emoji="📚",
                       description="Turn new vault notes into wiki pages; approve, reject or undo updates")
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
-    if os.getenv("PROXAI_WIKI_NIGHTLY", "on") != "off":
+    import sys
+    in_gateway = "gateway" in sys.argv and "run" in sys.argv   # not in short-lived cron workers
+    if in_gateway and os.getenv("PROXAI_WIKI_NIGHTLY", "on") != "off":
         threading.Thread(target=_nightly_loop, name="proxai-wiki-nightly", daemon=True).start()

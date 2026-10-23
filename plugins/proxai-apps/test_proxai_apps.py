@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import os
 import sys
 import tempfile
@@ -427,6 +428,59 @@ class DeleteApps(Base):
         plugin._start("update", "pomodoro-timer", "make it purple", "Pomodoro Timer", None, None)
         self.wait_idle()
         self.assertTrue(any("--status built 'No changes made" in c for c in self.shell), self.shell)
+
+class Scheduled(Base):
+    """Phone-scheduled jobs (proxai-schedule): this hook steps aside for "... at 2am"; an approved cron
+    run queues the work for the gateway; the queue does it; build results post a phone notice."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.rmtree(plugin.QUEUE, ignore_errors=True)
+        sched = plugin._schedule()
+        sched.STATE.mkdir(parents=True, exist_ok=True)
+        sched.save_jobs({"job1": {"action": "delete the pomodoro app", "approved": True},
+                         "job2": {"action": "build me a snake game", "approved": True}})
+        make_app("pomodoro-timer", name="Pomodoro Timer")
+        plugin._shell = lambda command, task_id=None, timeout=120: (
+            self.shell.append(command) or {"output": "moved" if "mv " in command else '{"ok": true}', "exit_code": 0})
+
+    def notices(self):
+        return plugin._schedule().notices.after(0)
+
+    def test_time_phrases_are_left_to_the_scheduler(self):
+        self.assertIsNone(plugin._on_pre_llm_call(session_id="s1", user_message="delete the pomodoro app at 2am"))
+        self.assertIsNone(plugin._on_pre_llm_call(session_id="s1", user_message="build me a snake game tonight at 11pm"))
+        self.assertEqual(plugin._pending_delete, {})
+        self.assertEqual(plugin._pending_build, {})
+
+    def test_approved_cron_run_queues_and_the_gateway_does_it(self):
+        r = plugin._on_pre_llm_call(user_message="[Scheduled job: approved]\ndelete the pomodoro app",
+                                    task_id="cron:job1:abc")
+        self.assertIn("being deleted", r["context"])
+        r = plugin._on_pre_llm_call(user_message="build me a snake game", task_id="cron:job2:abc")
+        self.assertIn("building", r["context"])
+        # Not approved (some other cron job): nothing.
+        self.assertIsNone(plugin._on_pre_llm_call(user_message="delete the pomodoro app", task_id="cron:other:x"))
+        self.assertEqual(len(list(plugin.QUEUE.glob("*.json"))), 2)
+        plugin.work_queue()
+        self.wait_idle()
+        self.assertTrue(any("mv /workspace/proxai/apps/pomodoro-timer" in c for c in self.shell))
+        self.assertEqual(len(self.cc.calls), 1)
+        self.assertEqual(list(plugin.QUEUE.glob("*.json")), [])
+        titles = [n["title"] for n in self.notices()]
+        self.assertIn("🗑️ Pomodoro Timer deleted", titles)
+        self.assertTrue(any(t.endswith("is ready") for t in titles), titles)
+
+    def test_busy_builder_keeps_queued_builds(self):
+        plugin._job = {"app": "x", "kind": "create", "started": time.time(), "name": "X"}
+        plugin.enqueue({"op": "build", "kind": "create", "app": "snake-game", "name": "Snake", "request": "snake"})
+        plugin.work_queue()
+        self.assertEqual(len(list(plugin.QUEUE.glob("*.json"))), 1)
+        plugin._job = None
+        plugin.work_queue()
+        self.wait_idle()
+        self.assertEqual(list(plugin.QUEUE.glob("*.json")), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

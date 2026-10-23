@@ -98,4 +98,6 @@ __pycache__/
 !plugins/proxai-style/**
 !plugins/proxai-wiki/
 !plugins/proxai-wiki/**
+!plugins/proxai-schedule/
+!plugins/proxai-schedule/**
 __pycache__/
