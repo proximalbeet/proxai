@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ProxAI Test App</title>
+<style>
+  :root { --bg:#0E0F13; --card:#161a24; --text:#e8eefc; --muted:#9aa7c2; --brand:#4DA8FF; --deep:#0B3D91; --cyan:#38E1FF; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:radial-gradient(120% 60% at 50% 0%, #10204a 0%, var(--bg) 60%); color:var(--text);
+         font:16px/1.4 system-ui, sans-serif; padding:16px 16px calc(16px + env(safe-area-inset-bottom)); min-height:100vh; }
+  h1 { font-size:20px; margin:4px 0 4px; } p { color:var(--muted); margin:0 0 16px; font-size:14px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  button { min-height:56px; border:0; border-radius:14px; color:#fff; font-size:15px; font-weight:600;
+           background:linear-gradient(135deg, var(--deep), var(--brand)); box-shadow:0 0 18px rgba(77,168,255,.25); }
+  button:active { transform:scale(.98); }
+  .card { background:var(--card); border-radius:14px; padding:14px; margin-top:16px; }
+  #log { font:13px/1.5 ui-monospace, monospace; color:var(--muted); white-space:pre-wrap; min-height:60px; }
+  .big { font-size:36px; font-weight:700; color:var(--cyan); }
+</style>
+</head>
+<body>
+  <h1>ProxAI Test App</h1>
+  <p>Each button tries one phone feature. Results show below.</p>
+  <div class="grid">
+    <button id="toast">Toast</button>
+    <button id="vibrate">Vibrate</button>
+    <button id="notify">Notify now</button>
+    <button id="remind">Remind in 1 min</button>
+    <button id="speak">Speak</button>
+    <button id="ask">Ask ProxAI</button>
+  </div>
+  <div class="card">
+    <div>Saved counter (survives closing the app)</div>
+    <div class="big" id="count">0</div>
+    <div class="grid"><button id="plus">+1</button><button id="reset">Reset</button></div>
+  </div>
+  <div class="card"><div id="log">Ready.</div></div>
+<script>
+  const P = window.ProxAI;
+  const log = (m) => { const el = document.getElementById('log'); el.textContent = new Date().toLocaleTimeString() + '  ' + m + '\n' + el.textContent; };
+  const on = (id, fn) => document.getElementById(id).addEventListener('click', fn);
+  if (!P) log('window.ProxAI not found (opened in a normal browser?)');
+  else log('Running in ' + (P.app.name || '?') + ' v' + (P.app.version || '?') + ', features: ' + (P.app.features || []).join(', '));
+  on('toast', () => { P && P.toast('Hello from the ProxAI shell'); log('toast sent'); });
+  on('vibrate', () => log('vibrate: ' + (P && P.vibrate(200))));
+  on('notify', () => log('notify: ' + (P && P.notify('ProxAI Test App', 'This is a notification from a generated app.')) + ' (false = allow notifications and tap again)'));
+  on('remind', () => log('remind in 1 min: ' + (P && P.remind(new Date(Date.now() + 60000), 'One minute is up!'))));
+  on('speak', () => log('speak: ' + (P && P.speak('Hello from your ProxAI test app.'))));
+  on('ask', async () => { try { log('ask: ' + await P.ask('Say hi in five words.')); } catch (e) { log('ask: ' + e.message); } });
+  const show = () => document.getElementById('count').textContent = localStorage.getItem('count') || '0';
+  on('plus', () => { localStorage.setItem('count', String(Number(localStorage.getItem('count') || 0) + 1)); show(); });
+  on('reset', () => { localStorage.removeItem('count'); show(); });
+  show();
+</script>
+</body>
+</html>

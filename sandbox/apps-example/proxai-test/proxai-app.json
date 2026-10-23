@@ -1,0 +1,8 @@
+{
+  "id": "proxai-test",
+  "name": "ProxAI Test App",
+  "version": "1.0",
+  "description": "Tries every phone feature a ProxAI app can use: toast, vibrate, notifications, reminders, speech, saved data.",
+  "features": ["vibrate", "notifications", "speech", "ask"],
+  "color": "#38E1FF"
+}

@@ -56,6 +56,10 @@ __pycache__/
 !sandbox/egress/**
 !sandbox/gateway/
 !sandbox/gateway/**
+# Phase 15 ProxAI apps: example app + builder test (builder itself is in image/)
+!sandbox/apps-example/
+!sandbox/apps-example/**
+!sandbox/test_app_build.py
 
 # Voice pipeline scripts only (no models, reference audio or virtualenvs)
 !voice/

@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+"""proxai-app-build: turn a ProxAI app folder into a signed APK (checklist Phase 15).
+
+Runs inside the proxai-sandbox image (offline). Claude Code writes the app; this packs it into the
+ProxAI shell (ProxMobile's `appshell` module, compiled once, in /opt/proxai-shell).
+
+  proxai-app-build [APP_DIR]                    build (default: current folder)
+  proxai-app-build --check [APP_DIR]            validate only, build nothing
+  proxai-app-build --status STATE MSG [APP_DIR] record progress for the phone (planning, writing,
+                                                testing, ...); "building"/"built"/"failed" are set
+                                                by the build itself
+  proxai-app-build --rollback CODE [APP_DIR]    restore the files of build CODE as a new build
+
+App folder (one git repo per app, /workspace/proxai/apps/<id>/):
+  proxai-app.json  {"id": "tip-calc", "name": "Tip Calc", "version": "1.0", "description": "...",
+                    "features": ["vibrate", "notifications", "speech", "ask"], "color": "#22aa88"}
+  www/index.html   the app (plus any other web files it loads by relative path)
+  icon.xml         optional: an Android <vector> for the icon foreground (108x108 viewport)
+
+Output: dist/<id>-<version>-<code>.apk (every build kept), status.json, builds.json, and a git
+commit + tag build-<code> in the app repo. Signed with the generated-apps key in
+<apps>/.signing/ (made on first use; never ProxMobile's key).
+"""
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+from xml.sax.saxutils import quoteattr
+
+ANDROID_HOME = Path(os.environ.get("ANDROID_HOME", "/opt/android-sdk"))
+BUILD_TOOLS = ANDROID_HOME / "build-tools" / "35.0.0"
+ANDROID_JAR = ANDROID_HOME / "platforms" / "android-35" / "android.jar"
+KIT = Path(os.environ.get("PROXAI_SHELL_KIT", "/opt/proxai-shell"))
+MIN_SDK, TARGET_SDK = 29, 35
+
+ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
+# Feature -> Android permissions. "speech" (text to speech) and "ask" (through ProxMobile) need none.
+FEATURES = {
+    "vibrate": ["android.permission.VIBRATE"],
+    "notifications": ["android.permission.POST_NOTIFICATIONS"],
+    "speech": [],
+    "ask": [],
+}
+NEEDS_APPROVAL = {"internet", "camera", "microphone", "location", "contacts", "sms", "storage"}
+MAX_WWW_BYTES = 25 * 1024 * 1024
+MAX_FILES = 500
+STATES = {"queued", "planning", "writing", "testing", "building", "built", "failed"}
+
+
+class BuildError(Exception):
+    pass
+
+
+def now() -> str:
+    return dt.datetime.now().isoformat(timespec="seconds")
+
+
+def run(argv: list, cwd: Path | None = None, input_text: str | None = None) -> str:
+    p = subprocess.run([str(a) for a in argv], cwd=cwd, capture_output=True, text=True, input=input_text)
+    if p.returncode != 0:
+        raise BuildError(f"{Path(str(argv[0])).name} failed: {(p.stderr or p.stdout).strip()[-800:]}")
+    return p.stdout
+
+
+# ---- status -------------------------------------------------------------------------------------
+
+def write_status(app: Path, state: str, message: str = "", **extra) -> None:
+    path = app / "status.json"
+    try:
+        old = json.loads(path.read_text())
+    except (OSError, ValueError):
+        old = {}
+    st = {"state": state, "message": message[:300], "time": now()}
+    if old.get("last_build"):
+        st["last_build"] = old["last_build"]
+    st.update(extra)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(st, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
+# ---- validation ---------------------------------------------------------------------------------
+
+def load_app(app: Path) -> dict:
+    try:
+        meta = json.loads((app / "proxai-app.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise BuildError("proxai-app.json is missing")
+    except ValueError as exc:
+        raise BuildError(f"proxai-app.json isn't valid JSON: {exc}")
+    app_id = str(meta.get("id", ""))
+    if not ID_RE.match(app_id):
+        raise BuildError("id must be 2-40 chars: lowercase letters, digits, '-', starting with a letter")
+    name = str(meta.get("name", "")).strip()
+    if not name or len(name) > 40:
+        raise BuildError("name is required (max 40 chars)")
+    version = str(meta.get("version", "1.0")).strip()
+    if not re.match(r"^[0-9][0-9A-Za-z.\-]{0,19}$", version):
+        raise BuildError("version must look like 1.0 or 1.2.3")
+    feats = meta.get("features", []) or []
+    if not isinstance(feats, list):
+        raise BuildError("features must be a list")
+    for f in feats:
+        if f in NEEDS_APPROVAL:
+            raise BuildError(f"feature '{f}' needs Nathan's approval and isn't available yet; "
+                             f"available: {', '.join(FEATURES)}")
+        if f not in FEATURES:
+            raise BuildError(f"unknown feature '{f}'; available: {', '.join(FEATURES)}")
+    color = str(meta.get("color", "#4DA8FF"))
+    if not re.match(r"^#[0-9a-fA-F]{6}$", color):
+        raise BuildError("color must be like #4DA8FF")
+    www = app / "www"
+    if not (www / "index.html").is_file():
+        raise BuildError("www/index.html is missing")
+    total, count = 0, 0
+    for p in www.rglob("*"):
+        if p.is_symlink():
+            raise BuildError(f"symlinks aren't allowed: {p.relative_to(app)}")
+        if p.is_file():
+            count += 1
+            total += p.stat().st_size
+            if any(part.startswith(".") for part in p.relative_to(www).parts):
+                raise BuildError(f"hidden files aren't served, rename: {p.relative_to(app)}")
+    if count > MAX_FILES or total > MAX_WWW_BYTES:
+        raise BuildError(f"www/ is too big ({count} files, {total // 1024} KB; max {MAX_FILES} files, 25 MB)")
+    return {"id": app_id, "name": name, "version": version, "description": str(meta.get("description", ""))[:300],
+            "features": sorted(set(feats)), "color": color.upper(),
+            "package": "com.proxai.apps." + app_id.replace("-", "_")}
+
+
+def check_icon(path: Path) -> str:
+    raw = path.read_text(encoding="utf-8")
+    if re.search(r"<!(DOCTYPE|ENTITY)", raw, re.I):
+        raise BuildError("icon.xml can't contain DOCTYPE/ENTITY")
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise BuildError(f"icon.xml isn't valid XML: {exc}")
+    if root.tag != "vector":
+        raise BuildError("icon.xml must be an Android <vector> drawable")
+    for el in root.iter():
+        for v in el.attrib.values():
+            if v.startswith("?") or (v.startswith("@") and not v.startswith("@android:color/")):
+                raise BuildError("icon.xml can't reference other resources")
+    return raw
+
+
+# ---- build --------------------------------------------------------------------------------------
+
+def manifest(meta: dict, code: int) -> str:
+    perms = sorted({p for f in meta["features"] for p in FEATURES[f]})
+    uses = "".join(f'    <uses-permission android:name="{p}" />\n' for p in perms)
+    receiver = ('        <receiver android:name="com.proxai.shell.ReminderReceiver" android:exported="false" />\n'
+                if "notifications" in meta["features"] else "")
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="{meta['package']}" android:versionCode="{code}" android:versionName={quoteattr(meta['version'])}>
+{uses}    <application
+        android:label={quoteattr(meta['name'])}
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity
+            android:name="com.proxai.shell.ShellActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+{receiver}    </application>
+</manifest>
+"""
+
+
+DEFAULT_FG = """<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M54,30 C56,46 62,52 78,54 C62,56 56,62 54,78 C52,62 46,56 30,54 C46,52 52,46 54,30 Z" />
+</vector>
+"""
+
+
+def background(color: str) -> str:
+    return f"""<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="108" android:endY="108">
+                <item android:offset="0" android:color="#FF0B3D91" />
+                <item android:offset="1" android:color="#FF{color[1:]}" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
+"""
+
+
+ADAPTIVE = """<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_bg" />
+    <foreground android:drawable="@drawable/ic_fg" />
+</adaptive-icon>
+"""
+
+
+def ensure_key(keys: Path) -> tuple[Path, Path]:
+    keys.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ks, pw = keys / "proxai-apps.p12", keys / "password"
+    if not ks.exists():
+        pw.write_text(secrets.token_urlsafe(24))
+        pw.chmod(0o600)
+        run(["keytool", "-genkeypair", "-keystore", ks, "-storetype", "PKCS12", "-storepass:file", pw,
+             "-alias", "proxai-apps", "-keyalg", "RSA", "-keysize", "3072", "-validity", "10000",
+             "-dname", "CN=ProxAI generated apps, O=ProxAI"])
+        ks.chmod(0o600)
+    return ks, pw
+
+
+def next_code(app: Path) -> int:
+    codes = [0]
+    try:
+        codes += [int(b["code"]) for b in json.loads((app / "builds.json").read_text())]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    for f in (app / "dist").glob("*.apk") if (app / "dist").is_dir() else []:
+        m = re.search(r"-(\d+)\.apk$", f.name)
+        if m:
+            codes.append(int(m.group(1)))
+    return max(codes) + 1
+
+
+def git(app: Path, *args: str) -> str:
+    return run(["git", "-c", "user.name=ProxAI", "-c", "user.email=proxai@localhost", "-c", "init.defaultBranch=main",
+                *args], cwd=app)
+
+
+def ensure_repo(app: Path) -> None:
+    if not (app / ".git").exists():
+        git(app, "init", "-q")
+    gi = app / ".gitignore"
+    want = ["dist/", ".build/", "status.json"]
+    have = gi.read_text().splitlines() if gi.exists() else []
+    if any(w not in have for w in want):
+        gi.write_text("\n".join(have + [w for w in want if w not in have]) + "\n")
+
+
+def build(app: Path, note: str = "") -> dict:
+    meta = load_app(app)
+    icon = check_icon(app / "icon.xml") if (app / "icon.xml").exists() else DEFAULT_FG
+    for need in (ANDROID_JAR, BUILD_TOOLS / "aapt2", KIT / "classes.dex"):
+        if not need.exists():
+            raise BuildError(f"missing {need} (not running in the proxai-sandbox apps image?)")
+    write_status(app, "building", f"Packing {meta['name']} {meta['version']}")
+    code = next_code(app)
+    work = app / ".build"
+    shutil.rmtree(work, ignore_errors=True)
+    (work / "res" / "drawable").mkdir(parents=True)
+    (work / "res" / "mipmap-anydpi").mkdir(parents=True)
+    (work / "assets").mkdir()
+    (work / "AndroidManifest.xml").write_text(manifest(meta, code))
+    (work / "res" / "drawable" / "ic_bg.xml").write_text(background(meta["color"]))
+    (work / "res" / "drawable" / "ic_fg.xml").write_text(icon)
+    (work / "res" / "mipmap-anydpi" / "ic_launcher.xml").write_text(ADAPTIVE)
+    shutil.copytree(app / "www", work / "assets" / "www")
+    (work / "assets" / "proxai-app.json").write_text(json.dumps(meta))
+
+    aapt2 = BUILD_TOOLS / "aapt2"
+    run([aapt2, "compile", "--dir", work / "res", "-o", work / "res.zip"])
+    unsigned = work / "unsigned.apk"
+    run([aapt2, "link", "-o", unsigned, "-I", ANDROID_JAR, "--manifest", work / "AndroidManifest.xml",
+         "-A", work / "assets", work / "res.zip", "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK])
+    with zipfile.ZipFile(unsigned, "a", zipfile.ZIP_DEFLATED) as z:
+        for dex in sorted(KIT.glob("classes*.dex")):
+            z.write(dex, dex.name)
+    aligned = work / "aligned.apk"
+    run([BUILD_TOOLS / "zipalign", "-f", "-p", "4", unsigned, aligned])
+
+    ks, pw = ensure_key(Path(os.environ.get("PROXAI_APPS_KEYS", app.parent / ".signing")))
+    (app / "dist").mkdir(exist_ok=True)
+    out = app / "dist" / f"{meta['id']}-{meta['version']}-{code}.apk"
+    run([BUILD_TOOLS / "apksigner", "sign", "--ks", ks, "--ks-pass", f"file:{pw}", "--ks-key-alias", "proxai-apps",
+         "--out", out, aligned])
+    certs = run([BUILD_TOOLS / "apksigner", "verify", "--print-certs", out])
+    m = re.search(r"certificate SHA-256 digest: ([0-9a-f]+)", certs)
+    Path(str(out) + ".idsig").unlink(missing_ok=True)
+    shutil.rmtree(work, ignore_errors=True)
+
+    sha = hashlib.sha256(out.read_bytes()).hexdigest()
+    ensure_repo(app)
+    git(app, "add", "-A")
+    if git(app, "status", "--porcelain").strip():
+        git(app, "commit", "-q", "-m", note or f"Build {meta['version']} (code {code})")
+    elif not git(app, "rev-parse", "--verify", "-q", "HEAD").strip():
+        raise BuildError("nothing to commit in a new repo")
+    commit = git(app, "rev-parse", "--short", "HEAD").strip()
+    git(app, "tag", "-f", f"build-{code}")
+
+    entry = {"code": code, "version": meta["version"], "apk": f"dist/{out.name}", "sha256": sha,
+             "size": out.stat().st_size, "commit": commit, "time": now(), "note": note}
+    try:
+        builds = json.loads((app / "builds.json").read_text())
+    except (OSError, ValueError):
+        builds = []
+    builds.append(entry)
+    (app / "builds.json").write_text(json.dumps(builds, indent=2) + "\n")
+    git(app, "add", "builds.json")
+    git(app, "commit", "-q", "-m", f"Record build {code}")
+    git(app, "tag", "-f", f"build-{code}")
+
+    last = {**entry, "id": meta["id"], "name": meta["name"], "package": meta["package"],
+            "description": meta["description"], "features": meta["features"],
+            "permissions": sorted({p for f in meta["features"] for p in FEATURES[f]}),
+            "cert_sha256": m.group(1) if m else None}
+    write_status(app, "built", f"{meta['name']} {meta['version']} is ready", last_build=last)
+    return last
+
+
+def rollback(app: Path, code: int) -> dict:
+    tag = f"build-{code}"
+    if not git(app, "tag", "-l", tag).strip():
+        raise BuildError(f"no build {code} in this app's history")
+    git(app, "checkout", tag, "--", "proxai-app.json", "www")
+    if (app / "icon.xml").exists() or git(app, "ls-tree", "--name-only", tag, "icon.xml").strip():
+        try:
+            git(app, "checkout", tag, "--", "icon.xml")
+        except BuildError:
+            (app / "icon.xml").unlink(missing_ok=True)
+    return build(app, note=f"Roll back to build {code}")
+
+
+def main(argv: list[str]) -> int:
+    args = argv[1:]
+    try:
+        if args[:1] == ["--status"]:
+            if len(args) < 3 or args[1] not in STATES:
+                raise BuildError(f"usage: --status STATE MESSAGE [APP_DIR]; STATE is one of {sorted(STATES)}")
+            app = Path(args[3] if len(args) > 3 else ".").resolve()
+            write_status(app, args[1], args[2])
+            return 0
+        if args[:1] == ["--check"]:
+            meta = load_app(Path(args[1] if len(args) > 1 else ".").resolve())
+            print(json.dumps({"ok": True, **meta}))
+            return 0
+        if args[:1] == ["--rollback"]:
+            if len(args) < 2 or not args[1].isdigit():
+                raise BuildError("usage: --rollback CODE [APP_DIR]")
+            app = Path(args[2] if len(args) > 2 else ".").resolve()
+            print(json.dumps({"ok": True, **rollback(app, int(args[1]))}))
+            return 0
+        if args and args[0].startswith("-"):
+            print(__doc__)
+            return 2
+        app = Path(args[0] if args else ".").resolve()
+        print(json.dumps({"ok": True, **build(app)}))
+        return 0
+    except BuildError as exc:
+        app = Path(args[-1] if args and not args[-1].startswith("-") and Path(args[-1]).is_dir() else ".").resolve()
+        if (app / "proxai-app.json").exists():
+            write_status(app, "failed", str(exc))
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
