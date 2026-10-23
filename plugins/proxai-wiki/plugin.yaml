@@ -1,0 +1,8 @@
+name: proxai-wiki
+version: "0.1.0"
+description: "Wiki synthesizer: Claude Code (Sonnet, Opus fallback) turns new/changed vault notes into 10-Wiki pages in a git workspace (~/dev/proxai/wiki-work). Course/knowledge/project notes go in right away; brain-dump/daily/focus notes wait in one digest for Nathan's yes. Undoable; promote.py writes 10-Wiki as a sandboxed job with backups and the vault lock. On request ('update the wiki') and nightly. Rules in policy.json."
+author: "prox"
+provides_tools:
+  - proxai_wiki
+provides_hooks:
+  - pre_llm_call

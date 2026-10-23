@@ -71,7 +71,7 @@ terminal:
   container_persistent: true
   docker_volumes:
     - /home/prox/Documents/ProxVault:/workspace/vault:ro
-    - /home/prox/Documents/ProxVault/10-Wiki:/workspace/vault/10-Wiki:rw
+    # 10-Wiki is read-only here (10-23): wiki pages come from the proxai-wiki synthesizer (staged, logged, undoable).
     - /home/prox/Documents/ProxVault/_inbox:/workspace/vault/_inbox:rw
     # Hidden from the container: an empty folder is mounted over each one (Phase 6).
     # 01-Personal = private; 07-Security = write-only (host-side plugin logs there);
@@ -681,6 +681,7 @@ plugins:
     - proxai-context
     - proxai-github
     - proxai-style
+    - proxai-wiki
   disabled: []
 _left_core_installed:
   - homeassistant

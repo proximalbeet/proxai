@@ -1,0 +1,10 @@
+{
+  "_comment": "Which vault notes feed the wiki (decided with Nathan 2026-10-23, 'middle option'). auto = goes into 10-Wiki right away; review = waits in one digest for Nathan's yes; anything else is never read. A note with 'wiki: no' (or false/off) in its frontmatter is always skipped. 01-Personal and 07-Security are never read whatever this says. Changes apply on the next run.",
+  "auto": ["02-Projects", "03-Courses", "04-Knowledge", "08-Roles", "09-Career"],
+  "review": ["05-Brain-Dump", "00-Daily", "06-Focus-Logs"],
+  "never": ["01-Personal", "07-Security", "10-Wiki", "_templates", "_needs-review", "_inbox"],
+  "max_notes_per_run": 20,
+  "nightly_at": "03:30",
+  "model": "sonnet",
+  "fallback_model": "opus"
+}

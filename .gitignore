@@ -96,4 +96,6 @@ __pycache__/
 !plugins/proxai-github/**
 !plugins/proxai-style/
 !plugins/proxai-style/**
+!plugins/proxai-wiki/
+!plugins/proxai-wiki/**
 __pycache__/
