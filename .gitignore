@@ -81,3 +81,8 @@ __pycache__/
 !plugins/proxai-mode/**
 !voice/test_tts_mode.py
 __pycache__/
+
+# Phase 15 ProxAI apps plugin
+!plugins/proxai-apps/
+!plugins/proxai-apps/**
+__pycache__/

@@ -27,6 +27,7 @@ cp -a "$A/jdk17" "$CTX/android/jdk17"
 cp -a "$A/Sdk/build-tools/35.0.0" "$CTX/android/build-tools"
 cp -a "$A/Sdk/platforms/android-35" "$CTX/android/platform"
 cp -a "$KIT" "$CTX/shell-kit"
+mkdir -p "$CTX/shell-kit/example" && cp -a "$HERE/apps-example/proxai-test" "$CTX/shell-kit/example/"
 
 # Two CPUs at most, so a rebuild doesn't heat the PC (thermal guard, Phase 14).
 docker build --pull=false --cpuset-cpus 0-1 --build-arg "CLAUDE_CODE_VERSION=$VERSION" -t "$TAG" "$CTX"

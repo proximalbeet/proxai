@@ -1,0 +1,6 @@
+name: proxai-apps
+version: "0.1.0"
+description: "Phase 15: phone apps built by Claude Code. Tool proxai_app (create/update/rollback/status/list), phone app (api_server) and CLI only. Jobs run in the background through the claude-code-delegation runner, one at a time, in /workspace/proxai/apps/<id>; proxai-app-build makes the signed APK; ProxMobile's Apps tab installs it. Logged to ~/.local/state/proxai/apps.log."
+author: "prox"
+provides_tools:
+  - proxai_app

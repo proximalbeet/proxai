@@ -672,6 +672,7 @@ plugins:
     - homeassistant
     - proxai-calendar
     - proxai-mode
+    - proxai-apps
   disabled: []
 _left_core_installed:
   - homeassistant

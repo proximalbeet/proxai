@@ -35,4 +35,5 @@ RUN java -version && aapt2 version && apksigner --version && command -v zipalign
 # packs a generated app into it and signs it. Staged by build-image.sh from PROXAI_SHELL_KIT_SRC.
 COPY shell-kit /opt/proxai-shell
 COPY proxai-app-build /usr/local/bin/proxai-app-build
+COPY proxai-apps-guide.md /opt/proxai-shell/GUIDE.md
 RUN chmod 755 /usr/local/bin/proxai-app-build && test -s /opt/proxai-shell/classes.dex
