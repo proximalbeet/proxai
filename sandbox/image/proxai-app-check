@@ -1,0 +1,224 @@
+#!/usr/bin/env node
+/*
+ * proxai-app-check: test a ProxAI app in a real browser before it may become an APK (Phase 15).
+ *
+ *   proxai-app-check [APP_DIR] [--script ui-test.js] [--fast-forward SECONDS]
+ *
+ * Opens www/index.html in headless Chromium the way the phone shows it (412x915, touch, 2x),
+ * with a stand-in window.ProxAI that behaves like the ProxAI shell (only declared features work)
+ * and records every call. Then, in dark and light mode:
+ *   - JS errors, console errors and any network request (apps have no internet) are problems
+ *   - sideways scrolling, tap targets under 40px and text cut off are problems
+ *   - every button / link / checkbox is tapped (dark mode), and errors after a tap are problems
+ *   - --script runs your own UI test: module.exports = async ({page, clock, assert, calls}) => {...}
+ *     (clock = Playwright's fake clock: await clock.fastForward(25 * 60 * 1000); calls() = ProxAI calls)
+ *   - --fast-forward moves the fake clock that far after the taps (timers, reminders)
+ * Screenshots go to .check/*.png: LOOK AT THEM (Read the files) before building.
+ * Result: .check/result.json with a hash of the app's files. proxai-app-build only packages files
+ * whose exact hash passed. Exit 0 = passed, 1 = problems found, 2 = usage error.
+ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const assert = require('assert');
+
+const MIME = { html: 'text/html', htm: 'text/html', js: 'text/javascript', mjs: 'text/javascript', css: 'text/css',
+  json: 'application/json', svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  gif: 'image/gif', webp: 'image/webp', ico: 'image/x-icon', woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf',
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', mp4: 'video/mp4', txt: 'text/plain', wasm: 'application/wasm' };
+const MAX_TAPS = 40;
+
+// Same hash as proxai-app-build: every file of www/, proxai-app.json and icon.xml, sorted by path.
+function appHash(app) {
+  const files = [];
+  const walk = (dir, rel) => {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const full = path.join(dir, name), r = rel ? `${rel}/${name}` : name;
+      const st = fs.lstatSync(full);
+      if (st.isDirectory()) walk(full, r); else if (st.isFile()) files.push(r);
+    }
+  };
+  walk(path.join(app, 'www'), 'www');
+  for (const f of ['proxai-app.json', 'icon.xml']) if (fs.existsSync(path.join(app, f))) files.push(f);
+  files.sort();
+  const h = crypto.createHash('sha256');
+  for (const f of files) { h.update(f + '\0'); h.update(fs.readFileSync(path.join(app, f))); h.update('\0'); }
+  return h.digest('hex');
+}
+
+// What ProxAI.pcStats() returns on the phone (sample values).
+const SAMPLE_PC = { watching: true, age_s: 1,
+  latest: { time: '2026-10-22T22:41:07', gpu_c: 41, gpu_w: 25.3, gpu_use: 3, vram_mib: 15724, vram_total_mib: 16303,
+    fan_pct: 0, sm_mhz: 1600, throttle: '0x0', cpu_pkg_c: 55, cpu_core_max_c: 61, cpu_use: 3.5, ram_used_mb: 14000,
+    ram_avail_mb: 16800, swap_mb: 5000, limits: { gpu_warn_c: 75, gpu_crit_c: 82, gpu_power_warn_w: 250, cpu_warn_c: 85,
+      cpu_crit_c: 95, ram_warn_mb: 2048 } },
+  history: Array.from({ length: 60 }, (_, i) => ({ minute: `22:${String(i).padStart(2, '0')}`, gpu_c: 40 + (i % 7),
+    gpu_w: 30 + (i % 11) * 6, gpu_use: i % 9, cpu_c: 52 + (i % 13), cpu_use: 3 + (i % 5), ram_free_mb: 16800 - i * 3 })),
+  alerts: [{ id: 3, time: '2026-10-22T21:17:35', level: 'ALERT', kind: 'cpu_t', msg: 'CPU package 86C (warn 85C), CPU use 47%' }] };
+
+function stub({ features, meta, sample }) {
+  const F = new Set(features); const calls = []; window.__proxaiCalls = calls; window.__proxaiUndeclared = [];
+  const use = (name, need, ok) => (...args) => {
+    calls.push({ name, args });
+    if (need && !F.has(need)) { window.__proxaiUndeclared.push(`${name} (needs "${need}")`); return false; }
+    return ok;
+  };
+  window.ProxAI = {
+    toast: use('toast', null, undefined), vibrate: use('vibrate', 'vibrate', true),
+    notify: use('notify', 'notifications', true), remind: use('remind', 'notifications', true),
+    speak: use('speak', 'speech', true),
+    ask(prompt) { calls.push({ name: 'ask', args: [prompt] });
+      if (!F.has('ask')) { window.__proxaiUndeclared.push('ask (needs "ask")'); return Promise.reject(new Error("This app wasn't built with the 'ask' feature.")); }
+      return Promise.reject(new Error("ProxAI.ask from installed apps isn't connected yet (needs a ProxMobile update).")); },
+    pcStats() { calls.push({ name: 'pcStats', args: [] });
+      if (!F.has('pc-stats')) { window.__proxaiUndeclared.push('pcStats (needs "pc-stats")'); return Promise.reject(new Error("This app wasn't built with the 'pc-stats' feature.")); }
+      return Promise.resolve(JSON.parse(JSON.stringify(sample))); },
+    app: { id: meta.id, name: meta.name, version: meta.version, features: [...F].sort() },
+  };
+}
+
+const PHONE_W = 412;
+
+async function layoutProblems(page, tag) {
+  return page.evaluate(([tag, W]) => {
+    // W = the phone's width. In phone mode Chromium widens the page to fit wide content
+    // (innerWidth grows), so compare against the real screen width, not innerWidth.
+    const out = [];
+    const doc = document.scrollingElement || document.documentElement;
+    if (doc.scrollWidth > W + 1) out.push(`${tag}: the page scrolls sideways (${doc.scrollWidth}px wide on a ${W}px screen)`);
+    const visible = (el) => { const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity !== 0; };
+    const name = (el) => (el.innerText || el.getAttribute('aria-label') || el.title || el.value || el.tagName).trim().slice(0, 40);
+    for (const el of document.querySelectorAll('button, [role=button], a[href], input, select, textarea')) {
+      if (!visible(el) || el.type === 'hidden') continue;
+      const r = el.getBoundingClientRect();
+      if ((r.width < 40 || r.height < 40) && !['checkbox', 'radio', 'range'].includes(el.type))
+        out.push(`${tag}: "${name(el)}" is only ${Math.round(r.width)}x${Math.round(r.height)}px to tap (use 44px+)`);
+      if (r.right > W + 1 || r.left < -1) out.push(`${tag}: "${name(el)}" sticks out past the screen edge`);
+    }
+    for (const el of document.querySelectorAll('body *')) {
+      if (!visible(el) || el.children.length) continue;
+      const s = getComputedStyle(el);
+      if ((s.overflow === 'hidden' || s.textOverflow === 'ellipsis') && el.scrollWidth > el.clientWidth + 2 && el.innerText.trim())
+        out.push(`${tag}: text is cut off: "${el.innerText.trim().slice(0, 40)}"`);
+    }
+    if (!document.body || !document.body.innerText.trim()) out.push(`${tag}: the page shows no text at all`);
+    return out.slice(0, 20);
+  }, [tag, PHONE_W]);
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const opt = { dir: '.', script: null, fastForward: 0 };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--script') opt.script = argv[++i];
+    else if (argv[i] === '--fast-forward') opt.fastForward = Number(argv[++i]) || 0;
+    else if (argv[i] === '-h' || argv[i] === '--help') { console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0]); process.exit(2); }
+    else opt.dir = argv[i];
+  }
+  const app = path.resolve(opt.dir);
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(path.join(app, 'proxai-app.json'), 'utf8')); }
+  catch (e) { console.log(JSON.stringify({ ok: false, error: `proxai-app.json: ${e.message}` })); process.exit(2); }
+  if (!fs.existsSync(path.join(app, 'www', 'index.html'))) { console.log(JSON.stringify({ ok: false, error: 'www/index.html is missing' })); process.exit(2); }
+  const features = Array.isArray(meta.features) ? meta.features : [];
+  const out = path.join(app, '.check');
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.mkdirSync(out, { recursive: true });
+
+  const { chromium } = require('playwright-core');
+  const browser = await chromium.launch({ executablePath: process.env.PROXAI_CHROMIUM || '/usr/bin/chromium',
+    args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run'] });
+  const problems = [], shots = [], notes = [];
+  const www = path.join(app, 'www');
+
+  async function newPage(scheme) {
+    const ctx = await browser.newContext({ viewport: { width: PHONE_W, height: 915 }, deviceScaleFactor: 2,
+      isMobile: true, hasTouch: true, colorScheme: scheme, locale: 'en-US', timezoneId: 'America/New_York' });
+    await ctx.route('**/*', async (route) => {
+      const u = new URL(route.request().url());
+      if (u.hostname !== 'app.proxai.local') {
+        if (!u.protocol.startsWith('data') && !u.protocol.startsWith('blob')) problems.push(`network request to ${u.href.slice(0, 80)} (apps have no internet: inline it or ship it in www/)`);
+        return route.abort();
+      }
+      let p = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'index.html';
+      if (p.endsWith('/')) p += 'index.html';
+      const file = path.join(www, p);
+      if (!file.startsWith(www + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        problems.push(`missing file: www/${p}`);
+        return route.fulfill({ status: 404, body: '' });
+      }
+      const ext = p.split('.').pop().toLowerCase();
+      return route.fulfill({ status: 200, contentType: MIME[ext] || 'application/octet-stream', body: fs.readFileSync(file) });
+    });
+    await ctx.addInitScript(stub, { features, meta, sample: SAMPLE_PC });
+    const page = await ctx.newPage();
+    await page.clock.install({ time: new Date('2026-10-23T09:00:00-04:00') });
+    page.on('pageerror', (e) => problems.push(`[${scheme}] JS error: ${String(e.message).split('\n')[0]}`));
+    page.on('console', (m) => { if (m.type() === 'error') problems.push(`[${scheme}] console error: ${m.text().slice(0, 200)}`); });
+    await page.goto('https://app.proxai.local/index.html', { waitUntil: 'load' });
+    await page.clock.runFor(800);
+    return { ctx, page };
+  }
+  const shot = async (page, name) => { const f = path.join(out, `${name}.png`); await page.screenshot({ path: f, fullPage: true }); shots.push(f); };
+
+  try {
+    // 1. Your UI test, on a fresh page.
+    if (opt.script) {
+      const { ctx, page } = await newPage('dark');
+      try {
+        const test = require(path.resolve(app, opt.script));
+        await test({ page, clock: page.clock, assert, calls: () => page.evaluate(() => window.__proxaiCalls) });
+        notes.push(`UI test ${opt.script} passed`);
+      } catch (e) {
+        problems.push(`UI test ${opt.script} failed: ${String(e && e.message || e).split('\n').slice(0, 3).join(' ')}`);
+      }
+      await shot(page, 'dark-ui-test-end');
+      await ctx.close();
+    }
+    // 2. Dark: first screen, then tap everything.
+    {
+      const { ctx, page } = await newPage('dark');
+      problems.push(...await layoutProblems(page, 'dark'));
+      await shot(page, 'dark-start');
+      const targets = await page.$$('button, [role=button], a[href], input[type=checkbox], input[type=radio], summary, select');
+      let tapped = 0;
+      for (const el of targets.slice(0, MAX_TAPS)) {
+        const label = ((await el.innerText().catch(() => '')) || (await el.getAttribute('aria-label')) || '').trim().slice(0, 40) || '(no label)';
+        if (!(await el.isVisible().catch(() => false)) || !(await el.isEnabled().catch(() => false))) continue;
+        try { await el.tap({ timeout: 2000 }); tapped++; await page.clock.runFor(400); }
+        catch (e) { problems.push(`could not tap "${label}": ${String(e.message).split('\n')[0]}`); }
+      }
+      notes.push(`tapped ${tapped} controls`);
+      if (opt.fastForward > 0) { await page.clock.runFor(opt.fastForward * 1000); notes.push(`fast-forwarded ${opt.fastForward}s`); }
+      problems.push(...(await layoutProblems(page, 'dark, after taps')).filter((p) => !p.includes('is only')));
+      await shot(page, 'dark-after-taps');
+      const undeclared = await page.evaluate(() => window.__proxaiUndeclared);
+      for (const u of new Set(undeclared)) problems.push(`uses ProxAI.${u} without declaring it in proxai-app.json features`);
+      const calls = await page.evaluate(() => window.__proxaiCalls.map((c) => c.name));
+      if (calls.length) notes.push(`ProxAI calls: ${[...new Set(calls)].join(', ')}`);
+      await ctx.close();
+    }
+    // 3. Light: first screen.
+    {
+      const { ctx, page } = await newPage('light');
+      problems.push(...await layoutProblems(page, 'light'));
+      await shot(page, 'light-start');
+      await ctx.close();
+    }
+  } finally {
+    await browser.close();
+  }
+  const unique = [...new Set(problems)];
+  const result = { ok: unique.length === 0, hash: appHash(app), problems: unique, notes, screenshots: shots.map((s) => path.relative(app, s)),
+    time: new Date().toISOString(), script: opt.script };
+  fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify(result, null, 2));
+  console.log(unique.length ? `PROBLEMS (${unique.length}):\n- ${unique.join('\n- ')}` : 'No problems found.');
+  if (notes.length) console.log(`Notes: ${notes.join('; ')}`);
+  console.log(`Screenshots (open each with the Read tool and check them): ${shots.join('  ')}`);
+  console.log(JSON.stringify({ ok: result.ok, problems: unique.length }));
+  process.exit(result.ok ? 0 : 1);
+}
+
+main().catch((e) => { console.log(JSON.stringify({ ok: false, error: String(e && e.stack || e).slice(0, 800) })); process.exit(2); });

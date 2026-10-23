@@ -42,7 +42,10 @@ APPS_HOST = Path(os.getenv("PROXAI_APPS_DIR", "~/dev/proxai/apps")).expanduser()
 APPS_SANDBOX = "/workspace/proxai/apps"
 LOG = Path(os.getenv("PROXAI_STATE_DIR", "~/.local/state/proxai")).expanduser() / "apps.log"
 ALLOWED_PLATFORMS = {"api_server", "cli"}
-BUILD_MINUTES, BUILD_TURNS = 20, 40
+# Room to plan, build, test in the browser, look at screenshots and fix (cc-run's maximums).
+BUILD_MINUTES, BUILD_TURNS = 30, 60
+# Same model as an interactive Claude Code session (Nathan 10-23: "as if I asked you to build it").
+BUILD_MODEL = os.getenv("PROXAI_APPS_MODEL", "opus")
 MAX_REQUEST = 4000
 
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
@@ -197,10 +200,14 @@ def build_task(kind: str, app_id: str, request: str, name: str = "") -> str:
         what = (f"This app ALREADY EXISTS. Change it as Nathan asks, keep everything else working, keep its "
                 f"saved data format compatible, and bump the version (e.g. 1.0 -> 1.1).\n"
                 f"Nathan's change request:\n{request}\n")
-    tail = (f"\nReport progress with `proxai-app-build --status planning|writing|testing \"short message\" {d}`. "
-            f"Test the logic with Node. Finish with `proxai-app-build {d}` and fix problems until it prints "
-            f"\"ok\": true. Your final answer: 2-3 plain sentences for Nathan (what the app does, how to use "
-            f"it, version), no markdown.")
+    tail = (f"\nWork like a careful senior developer shipping to Nathan's phone, following the guide's steps: "
+            f"list every feature the request implies, build it, test the logic with Node, then run "
+            f"`proxai-app-check {d} --script ui-test.js` with a UI test that exercises EVERY feature on that list, "
+            f"open every screenshot it prints with the Read tool and fix anything that looks wrong, and repeat until "
+            f"it reports no problems and the screenshots look right. `proxai-app-build {d}` refuses files that "
+            f"haven't passed the check. Report progress with `proxai-app-build --status planning|writing|testing "
+            f"\"short message\" {d}`. Your final answer: 2-3 plain sentences for Nathan (what the app does, how to "
+            f"use it, version, and what you tested), no markdown.")
     return head + what + tail
 
 
@@ -221,7 +228,7 @@ def _run_job(kind: str, app_id: str, request: str, name: str, code: int | None, 
                    f"{shlex.quote('Starting: ' + (name or app_id))} {d}", task_id=task_id, timeout=60)
             raw = _cc()._handle_claude_code(
                 {"task": build_task(kind, app_id, request, name), "project": "apps",
-                 "max_turns": BUILD_TURNS, "timeout_minutes": BUILD_MINUTES},
+                 "max_turns": BUILD_TURNS, "timeout_minutes": BUILD_MINUTES, "model": BUILD_MODEL},
                 task_id=task_id, session_id=f"proxai-app-{app_id}")
             cc = json.loads(raw)
             status = _read_json(APPS_HOST / app_id / "status.json", {})

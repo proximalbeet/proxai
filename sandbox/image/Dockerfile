@@ -37,3 +37,16 @@ COPY shell-kit /opt/proxai-shell
 COPY proxai-app-build /usr/local/bin/proxai-app-build
 COPY proxai-apps-guide.md /opt/proxai-shell/GUIDE.md
 RUN chmod 755 /usr/local/bin/proxai-app-build && test -s /opt/proxai-shell/classes.dex
+
+# Phase 15: real-browser test for generated apps (proxai-app-check). Chromium from Debian and
+# playwright-core (driver only, no browser download) are fetched while the image is built; the
+# running sandbox stays offline. proxai-app-build packages only files that passed the check.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium fonts-noto-color-emoji fonts-dejavu-core \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g --no-fund --no-audit playwright-core@1.55.0 \
+ && npm cache clean --force
+ENV NODE_PATH=/usr/local/lib/node_modules \
+    PROXAI_CHROMIUM=/usr/bin/chromium
+COPY proxai-app-check /usr/local/bin/proxai-app-check
+RUN chmod 755 /usr/local/bin/proxai-app-check && chromium --version && node -e "require('playwright-core')"

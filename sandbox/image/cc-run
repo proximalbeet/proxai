@@ -1,7 +1,7 @@
 #!/bin/bash
 # cc-run: the only way Hermes runs Claude Code. Lives in the proxai-sandbox image.
 #
-#   cc-run --project NAME [--max-turns N] [--timeout SECONDS] < task.txt
+#   cc-run --project NAME [--max-turns N] [--timeout SECONDS] [--model sonnet|opus] < task.txt
 #
 # The task is read from stdin, so it never passes through a shell command line.
 # Prints Claude Code's JSON result. Exit codes: 0 ok, 2 bad arguments,
@@ -15,6 +15,7 @@ MAX_TURNS_LIMIT=60
 TIMEOUT=900
 TIMEOUT_LIMIT=1800
 PROJECT=""
+MODEL=""
 
 fail() { printf '{"is_error":true,"cc_run_error":"%s"}\n' "$2"; exit "$1"; }
 
@@ -23,6 +24,7 @@ while [ $# -gt 0 ]; do
     --project)   PROJECT="${2:-}"; shift 2 ;;
     --max-turns) MAX_TURNS="${2:-}"; shift 2 ;;
     --timeout)   TIMEOUT="${2:-}"; shift 2 ;;
+    --model)     MODEL="${2:-}"; shift 2 ;;
     *) fail 2 "unknown argument: $1" ;;
   esac
 done
@@ -33,6 +35,7 @@ done
 [[ "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || fail 2 "project must be a single folder name under ~/dev/proxai"
 [[ "$MAX_TURNS" =~ ^[0-9]+$ ]] && [ "$MAX_TURNS" -ge 1 ] || fail 2 "max-turns must be a positive number"
 [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && [ "$TIMEOUT" -ge 30 ] || fail 2 "timeout must be at least 30 seconds"
+[ -z "$MODEL" ] || [[ "$MODEL" =~ ^(sonnet|opus)$ ]] || fail 2 "model must be sonnet or opus"
 [ "$MAX_TURNS" -le "$MAX_TURNS_LIMIT" ] || MAX_TURNS=$MAX_TURNS_LIMIT
 [ "$TIMEOUT" -le "$TIMEOUT_LIMIT" ] || TIMEOUT=$TIMEOUT_LIMIT
 
@@ -55,7 +58,7 @@ RUNS=/root/.cache/cc-runs
 mkdir -p "$RUNS"
 OUT="$RUNS/$(date +%Y%m%d-%H%M%S)-$PROJECT.json"
 printf '%s' "$TASK" | timeout --kill-after=15 "$TIMEOUT" \
-  claude -p --output-format json --max-turns "$MAX_TURNS" --dangerously-skip-permissions >"$OUT" 2>"$OUT.err"
+  claude -p --output-format json --max-turns "$MAX_TURNS" ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions >"$OUT" 2>"$OUT.err"
 rc=$?
 [ $rc -eq 124 ] && fail 124 "timed out after ${TIMEOUT}s"
 

@@ -17,6 +17,10 @@ App folder (one git repo per app, /workspace/proxai/apps/<id>/):
   www/index.html   the app (plus any other web files it loads by relative path)
   icon.xml         optional: an Android <vector> for the icon foreground (108x108 viewport)
 
+Packages only files that passed `proxai-app-check` (real-browser test): .check/result.json must
+say ok for the exact current files (same hash), or the files must be an earlier build's checked
+files (rollback). PROXAI_APP_CHECK=off skips this (builder tests only).
+
 Output: dist/<id>-<version>-<code>.apk (every build kept), status.json, builds.json, and a git
 commit + tag build-<code> in the app repo. Signed with the generated-apps key in
 <apps>/.signing/ (made on first use; never ProxMobile's key).
@@ -140,6 +144,41 @@ def load_app(app: Path) -> dict:
             "package": "com.proxai.apps." + app_id.replace("-", "_")}
 
 
+def app_hash(app: Path) -> str:
+    """Same hash as proxai-app-check: www/**, proxai-app.json, icon.xml, sorted by path."""
+    files = sorted([str(p.relative_to(app)).replace(os.sep, "/") for p in (app / "www").rglob("*")
+                    if p.is_file() and not p.is_symlink()]
+                   + [f for f in ("proxai-app.json", "icon.xml") if (app / f).is_file()])
+    h = hashlib.sha256()
+    for f in files:
+        h.update(f.encode() + b"\0")
+        h.update((app / f).read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def require_check(app: Path) -> str:
+    """The checked hash of the current files, or BuildError if they weren't checked."""
+    current = app_hash(app)
+    if os.environ.get("PROXAI_APP_CHECK") == "off":
+        return current
+    try:
+        builds = json.loads((app / "builds.json").read_text())
+    except (OSError, ValueError):
+        builds = []
+    if current in {b.get("check_hash") for b in builds}:
+        return current          # an earlier build's checked files (rollback)
+    try:
+        res = json.loads((app / ".check" / "result.json").read_text())
+    except (OSError, ValueError):
+        raise BuildError("run proxai-app-check first: no APK until the app passes the real-browser test")
+    if res.get("hash") != current:
+        raise BuildError("the files changed since the last proxai-app-check: run it again (and look at the screenshots)")
+    if not res.get("ok"):
+        raise BuildError(f"proxai-app-check found {len(res.get('problems', []))} problem(s): fix them and run it again")
+    return current
+
+
 def check_icon(path: Path) -> str:
     raw = path.read_text(encoding="utf-8")
     if re.search(r"<!(DOCTYPE|ENTITY)", raw, re.I):
@@ -256,7 +295,7 @@ def ensure_repo(app: Path) -> None:
     if not (app / ".git").exists():
         git(app, "init", "-q")
     gi = app / ".gitignore"
-    want = ["dist/", ".build/", "status.json"]
+    want = ["dist/", ".build/", ".check/", "status.json"]
     have = gi.read_text().splitlines() if gi.exists() else []
     if any(w not in have for w in want):
         gi.write_text("\n".join(have + [w for w in want if w not in have]) + "\n")
@@ -265,6 +304,7 @@ def ensure_repo(app: Path) -> None:
 def build(app: Path, note: str = "") -> dict:
     meta = load_app(app)
     icon = check_icon(app / "icon.xml") if (app / "icon.xml").exists() else DEFAULT_FG
+    checked = require_check(app)
     for need in (ANDROID_JAR, BUILD_TOOLS / "aapt2", KIT / "classes.dex"):
         if not need.exists():
             raise BuildError(f"missing {need} (not running in the proxai-sandbox apps image?)")
@@ -314,7 +354,7 @@ def build(app: Path, note: str = "") -> dict:
     git(app, "tag", "-f", f"build-{code}")
 
     entry = {"code": code, "version": meta["version"], "apk": f"dist/{out.name}", "sha256": sha,
-             "size": out.stat().st_size, "commit": commit, "time": now(), "note": note}
+             "size": out.stat().st_size, "commit": commit, "time": now(), "note": note, "check_hash": checked}
     try:
         builds = json.loads((app / "builds.json").read_text())
     except (OSError, ValueError):

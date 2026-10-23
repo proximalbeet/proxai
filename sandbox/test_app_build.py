@@ -21,11 +21,13 @@ IMAGE = os.environ.get("IMAGE", "proxai-sandbox:2.1.302-apps")
 WS = Path(tempfile.mkdtemp(prefix="app-build-test-", dir=os.environ.get("TMPDIR")))
 APPS = WS / "apps"
 UID = f"{os.getuid()}:{os.getgid()}"
+CHECK = "off"   # the builder tests skip the browser check; AppCheck below turns it on
 
 
 def sh(cmd: str, check=False) -> subprocess.CompletedProcess:
     """Run a shell command inside the sandbox image, workspace mounted like the live container."""
     p = subprocess.run(["docker", "run", "--rm", "--network", "none", "--user", UID, "-e", "HOME=/tmp",
+                        "-e", f"PROXAI_APP_CHECK={CHECK}",
                         "-v", f"{WS}:/workspace/proxai", "-w", "/workspace/proxai/apps", IMAGE,
                         "bash", "-c", cmd], capture_output=True, text=True, timeout=300)
     if check and p.returncode != 0:
@@ -175,6 +177,69 @@ class AppBuild(unittest.TestCase):
         badging = sh(f"aapt2 dump badging /workspace/proxai/apps/icon-app/{r['apk']}", check=True).stdout
         self.assertNotIn("uses-permission", badging)
 
+
+
+class AppCheck(unittest.TestCase):
+    """proxai-app-check (headless Chromium in the image) and the build gate."""
+
+    def setUp(self):
+        global CHECK
+        CHECK = "on"
+
+    def tearDown(self):
+        global CHECK
+        CHECK = "off"
+
+    def test_example_app_passes_the_check_and_then_builds(self):
+        app = copy_example("checked-app")
+        meta = json.loads((app / "proxai-app.json").read_text())
+        meta["id"] = "checked-app"
+        (app / "proxai-app.json").write_text(json.dumps(meta))
+        r = build("checked-app")
+        self.assertFalse(r["ok"])
+        self.assertIn("run proxai-app-check first", r["error"])
+        (app / "ui-test.js").write_text(
+            "module.exports = async ({ page, clock, assert, calls }) => {\n"
+            "  await page.locator('#plus').tap(); await page.locator('#plus').tap();\n"
+            "  assert.equal(await page.locator('#count').innerText(), '2');\n"
+            "  await page.reload(); await clock.runFor(500);\n"
+            "  assert.equal(await page.locator('#count').innerText(), '2');\n"
+            "  await page.locator('#vibrate').tap();\n"
+            "  assert.ok((await calls()).some(c => c.name === 'vibrate'));\n"
+            "};\n")
+        p = sh("proxai-app-check /workspace/proxai/apps/checked-app --script ui-test.js")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        res = json.loads((app / ".check" / "result.json").read_text())
+        self.assertTrue(res["ok"], res)
+        self.assertIn("UI test ui-test.js passed", res["notes"])
+        self.assertEqual(sorted(Path(s).name for s in res["screenshots"]),
+                         ["dark-after-taps.png", "dark-start.png", "dark-ui-test-end.png", "light-start.png"])
+        self.assertTrue(build("checked-app")["ok"])
+        # Any edit after the check means checking again.
+        html = app / "www" / "index.html"
+        html.write_text(html.read_text().replace("Ready.", "Ready!"))
+        r = build("checked-app")
+        self.assertFalse(r["ok"])
+        self.assertIn("changed since the last proxai-app-check", r["error"])
+
+    def test_check_catches_broken_apps(self):
+        app = copy_example("broken-app")
+        meta = json.loads((app / "proxai-app.json").read_text())
+        meta.update({"id": "broken-app", "features": []})
+        (app / "proxai-app.json").write_text(json.dumps(meta))
+        (app / "www" / "index.html").write_text(
+            '<!doctype html><html><head><meta name="viewport" content="width=device-width">'
+            '<link rel="stylesheet" href="https://cdn.example.com/x.css"></head><body>'
+            '<div style="width:900px">Too wide</div>'
+            '<button id="b" style="width:20px;height:20px" onclick="ProxAI.vibrate(50); nope()">x</button>'
+            '<script src="missing.js"></script></body></html>')
+        p = sh("proxai-app-check /workspace/proxai/apps/broken-app")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        problems = " | ".join(json.loads((app / ".check" / "result.json").read_text())["problems"])
+        for part in ("scrolls sideways", "network request to https://cdn.example.com", "missing file: www/missing.js",
+                     "only 20x20px", "JS error", "without declaring it"):
+            self.assertIn(part, problems)
+        self.assertFalse(build("broken-app")["ok"])
 
 if __name__ == "__main__":
     try:

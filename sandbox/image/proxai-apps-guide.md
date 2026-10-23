@@ -60,15 +60,40 @@ icon.xml          optional: Android <vector>, 108x108 viewport, white shapes, ke
 
 ## Steps (report each with --status so Nathan sees progress on the phone)
 
+Ship it the way a careful developer would: nothing reaches the phone until it has been used in a
+real browser at phone size and looked at.
+
 ```bash
 D=/workspace/proxai/apps/<id>
 proxai-app-build --status planning "Planning the app" $D
-proxai-app-build --status writing "Writing the screens" $D
-proxai-app-build --status testing "Testing" $D
-proxai-app-build $D          # prints {"ok": true, ...} or {"ok": false, "error": ...}
 ```
+1. **Plan.** Write `PLAN.md`: every feature the request asks for or clearly implies (one line
+   each), the screens, the data kept in `localStorage`, and the edge cases (empty state, very long
+   text, rotating the phone, the app reopened mid-task). For an update, also list what must keep
+   working.
+2. **Build** (`--status writing "Writing the screens"`). Logic in plain functions (e.g.
+   `www/logic.js`) that also load in Node; UI code separate.
+3. **Test the logic** (`--status testing "Testing"`): `node --check` every JS file, and a Node test
+   (`node --test` or `assert`) for the logic, including the edge cases from the plan.
+4. **Test it in the browser**: write `ui-test.js` that drives the real page through EVERY feature
+   in `PLAN.md` and asserts what the screen shows. Example:
+   ```js
+   module.exports = async ({ page, clock, assert, calls }) => {
+     await page.getByRole('button', { name: 'Start' }).tap();
+     await clock.runFor(25 * 60 * 1000);                   // fake time: 25 minutes pass instantly
+     assert.match(await page.locator('#phase').innerText(), /break/i);
+     assert.ok((await calls()).some(c => c.name === 'vibrate'));   // ProxAI calls the app made
+     await page.reload();                                   // data must survive a restart
+   };
+   ```
+   Then run `proxai-app-check $D --script ui-test.js` (add `--fast-forward SECONDS` for timers).
+   It also taps every control, checks dark and light mode, sideways scrolling, tap-target size, cut
+   off text, JS/console errors, network use and features used without being declared.
+5. **Look at it.** Open every screenshot the check prints (`.check/*.png`) with the Read tool. Is
+   everything readable in both themes, aligned, nothing overlapping or cut off, does it look like a
+   finished app? Fix what isn't, then go back to step 3. Repeat until the check reports no problems
+   AND the screenshots look right.
+6. **Build**: `proxai-app-build $D`. It refuses files that haven't passed the check (any edit after
+   the check means checking again). Fix and repeat until it prints `"ok": true`.
 
-Testing: put the logic in plain functions (e.g. `www/app.js`) and test them with Node
-(`node --test` or a small script with `assert`); run `node --check` on every JS file; make sure
-`proxai-app-build --check $D` passes. Fix and rebuild until the build prints `"ok": true`.
-`proxai-app-build --rollback <code> $D` restores an older build as a new one.
+`proxai-app-build --rollback <code> $D` restores an older build as a new one (no new check needed).
