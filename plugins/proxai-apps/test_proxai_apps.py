@@ -218,10 +218,44 @@ class AppRequestHook(Base):
         self.wait_idle()
         self.assertEqual(len(self.cc.calls), 1)
 
-    def test_changes_get_a_hint_not_a_build(self):
-        r = self.hook("Change my Water Log app (water-log): add a 750 ml button")
+    def test_change_from_the_apps_tab_starts_an_update(self):
+        make_app("pomodoro-timer", name="Pomodoro Timer")
+        r = self.hook("Change my Pomodoro Timer app (pomodoro-timer): add a 50-minute focus option")
+        self.assertIn("ALREADY started updating Pomodoro Timer", r["context"])
+        self.wait_idle()
+        task = self.cc.calls[0]["args"]["task"]
+        self.assertIn("ALREADY EXISTS", task)
+        self.assertIn("add a 50-minute focus option", task)
+
+    def test_plain_change_by_name_starts_an_update(self):
+        make_app("pomodoro-timer", name="Pomodoro Timer")
+        make_app("water-log", name="Water Log")
+        r = self.hook("add a dark mode toggle to my pomodoro timer")
+        self.assertIn("pomodoro-timer", r["context"])
+        self.wait_idle()
+        self.assertIn("/workspace/proxai/apps/pomodoro-timer", self.cc.calls[0]["args"]["task"])
+
+    def test_rollback_from_the_versions_dialog(self):
+        make_app("pomodoro-timer", name="Pomodoro Timer", builds=(1, 2))
+        r = self.hook("Roll back my Pomodoro Timer app (pomodoro-timer) to build 1 (version 1.0).")
+        self.assertIn("rolling Pomodoro Timer back to build 1", r["context"])
+        self.wait_idle()
+        self.assertEqual(self.shell[-1], "proxai-app-build --rollback 1 /workspace/proxai/apps/pomodoro-timer")
+        self.assertEqual(self.cc.calls, [])
+        r = self.hook("Roll back my Pomodoro Timer app (pomodoro-timer) to build 9")
+        self.assertIn("has no build 9", r["context"])
+
+    def test_unclear_app_gets_a_hint(self):
+        make_app("pomodoro-timer", name="Pomodoro Timer")
+        r = self.hook("Change my tip calculator app: round up")
         self.assertIn("proxai_app", r["context"])
         self.assertNotIn("ALREADY", r["context"])
+        self.assertEqual(self.cc.calls, [])
+
+    def test_mentioning_an_app_without_a_change_does_nothing(self):
+        make_app("pomodoro-timer", name="Pomodoro Timer")
+        self.assertIsNone(self.hook("I just used my pomodoro timer, it was great"))
+        self.assertIsNone(self.hook("How do I add a sound to my pomodoro timer?"))
         self.assertEqual(self.cc.calls, [])
 
     def test_left_alone(self):

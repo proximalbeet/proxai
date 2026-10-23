@@ -16,8 +16,9 @@ the sandbox as an APK that ProxMobile's Apps tab installs.
   (10-22: it wrote a Pomodoro app into the chat, then with a hint said "I'll build this" and
   stopped). So for a clear NEW-app request from the phone/CLI, the ``pre_llm_call`` hook starts the
   build itself and tells the model it's already running; the model only has to confirm. Questions
-  ("how would I build…?") and "quick … in the chat" are left alone. Changes/rollbacks to existing
-  apps still go through the tool, with a hint.
+  ("how would I build…?") and "quick … in the chat" are left alone. Changes and rollbacks to an
+  app the PC knows (by its "(id)" from the Apps tab, or its name in the message) start the same
+  way; if the app isn't clear, the model gets a hint to use the tool.
 """
 from __future__ import annotations
 
@@ -371,6 +372,42 @@ def is_new_app_request(text: str) -> bool:
     return bool(_APP_ASK.search(text) or _LIST_APP.search(text))
 
 
+_CHANGE_VERB = re.compile(r"\b(change|update|fix|add|remove|delete|make it|tweak|improve|rename|switch|"
+                          r"replace|move|turn|let it|give it|can it)\b", re.I)
+_ROLLBACK = re.compile(r"\broll ?back\b.{0,80}?\bbuild\s+(\d+)", re.I | re.S)
+_ID_IN_PARENS = re.compile(r"\(([a-z][a-z0-9-]{1,39})\)")
+
+
+def find_app(text: str) -> str | None:
+    """The one existing app a message is about: its "(id)" (Apps tab), else its name or id in the text."""
+    m = _ID_IN_PARENS.search(text)
+    if m and app_info(m.group(1)):
+        return m.group(1)
+    low = " " + re.sub(r"[^a-z0-9]+", " ", text.lower()) + " "
+    hits = []
+    for a in list_apps():
+        name = " " + re.sub(r"[^a-z0-9]+", " ", str(a["name"]).lower()).strip() + " "
+        ident = " " + a["app"].replace("-", " ") + " "
+        if (len(name.strip()) >= 3 and name in low) or ident in low:
+            hits.append(a["app"])
+    return hits[0] if len(hits) == 1 else None
+
+
+def change_request(text: str) -> tuple[str, str, int | None] | None:
+    """('update'|'rollback', app id, build code) for a change to a known app, else None."""
+    if _IN_CHAT.search(text) or _QUESTION.search(text):
+        return None
+    app_id = find_app(text)
+    if not app_id:
+        return None
+    m = _ROLLBACK.search(text)
+    if m:
+        return "rollback", app_id, int(m.group(1))
+    if _CHANGE_VERB.search(text):
+        return "update", app_id, None
+    return None
+
+
 def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
     if parent_session_id:
         return None
@@ -378,6 +415,24 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
     if not allowed:
         return None
     text = _plain(user_message).strip()
+    change = change_request(text)
+    if change:
+        kind, app_id, code = change
+        info = app_info(app_id)
+        name = info["name"]
+        if kind == "rollback" and code not in [b["code"] for b in info["builds"]]:
+            return {"context": f"[proxai-apps] {name} has no build {code}. Tell Nathan which builds exist: "
+                               f"{[b['code'] for b in info['builds']]}."}
+        err = _start(kind, app_id, "" if kind == "rollback" else text[:MAX_REQUEST], name, code, None)
+        if err:
+            return {"context": f"[proxai-apps] Nathan asked to change {name}, but it can't start yet: {err} "
+                               "Tell him that in one sentence."}
+        _log({"app": app_id, "kind": kind, "by": "hook", "request": text[:500], "started": True})
+        what = f"rolling {name} back to build {code}" if kind == "rollback" else f"updating {name} as he asked"
+        return {"context": f"[proxai-apps] Done for you: the app builder (Claude Code on the PC) has ALREADY "
+                           f"started {what} (app id {app_id}). Do NOT write any app code or HTML and do NOT call "
+                           "proxai_app. Reply in one or two short sentences: it's on it, and when it's ready the "
+                           "Apps tab shows an Update button (his saved data stays)."}
     if is_new_app_request(text):
         name = guess_name(text)
         app_id = new_id(name or text[:40])
