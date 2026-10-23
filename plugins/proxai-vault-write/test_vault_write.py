@@ -88,7 +88,7 @@ class Rules(unittest.TestCase):
         r = lambda p: rules.rule_for(p, self.p)
         self.assertEqual(r("_inbox/a.md"), "free")
         self.assertEqual(r("05-Brain-Dump/a.md"), "free")
-        self.assertEqual(r("10-Wiki/concepts/a.md"), "free")
+        self.assertEqual(r("10-Wiki/concepts/a.md"), "never")   # wiki synthesizer only (10-23)
         self.assertEqual(r("04-Knowledge/a.md"), "ask")
         self.assertEqual(r("00-Daily/2026-10-22.md"), "ask")
         self.assertEqual(r("notes-at-root.md"), "ask")
@@ -278,10 +278,10 @@ class AskFolders(Base):
 
     def test_status_and_command(self):
         s = self.call(action="status")
-        self.assertEqual(s["free_folders"], ["_inbox", "05-Brain-Dump", "10-Wiki"])
+        self.assertEqual(s["free_folders"], ["_inbox", "05-Brain-Dump"])
         self.call(action="write", path="05-Brain-Dump/a.md", content="a")
         out = plugin._cmd_vault_writes()
-        self.assertIn("Free (no asking): _inbox, 05-Brain-Dump, 10-Wiki", out)
+        self.assertIn("Free (no asking): _inbox, 05-Brain-Dump", out)
         self.assertIn("created 05-Brain-Dump/a.md", out)
 
 
@@ -332,7 +332,9 @@ class PointsAtVaultWrite(Base):
 
     def test_writable_folders_other_tools_and_paths_pass(self):
         self.assertIsNone(self.block("/workspace/vault/_inbox/x.md"))
-        self.assertIsNone(self.block("/workspace/vault/10-Wiki/x.md"))
+        # The wiki: only the synthesizer writes it, not the chat model (Nathan 10-23).
+        self.assertIn("update the wiki", self.block("/workspace/vault/10-Wiki/x.md")["message"])
+        self.assertFalse(self.call(action="write", path="10-Wiki/concepts/x.md", content="# x")["ok"])
         self.assertIsNone(self.block("/workspace/proxai/notes.md"))
         self.assertIsNone(plugin._on_pre_tool_call(tool_name="read_file",
                                                    args={"path": "/workspace/vault/04-Knowledge/rust.md"}))

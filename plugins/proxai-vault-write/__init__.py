@@ -1,13 +1,14 @@
 """
 ProxAI vault writes with Nathan's permission.
 
-Hermes's container sees the vault read-only except _inbox/ and 10-Wiki/, and the gateway's own
+Hermes's container sees the vault read-only except _inbox/, and the gateway's own
 sandbox keeps it read-only too. This plugin is the one way to write elsewhere:
 
 * ``vault_write`` tool: write (create / replace / append a note), confirm, cancel, status.
 * Folder rules come from ``policy.json``:
-    free  = written right away (_inbox, 05-Brain-Dump, 10-Wiki)
-    never = refused (01-Personal, 07-Security, AGENTS.md, CLAUDE.md, anything starting with ".")
+    free  = written right away (_inbox, 05-Brain-Dump)
+    never = refused (01-Personal, 07-Security, 10-Wiki, AGENTS.md, CLAUDE.md, anything starting with ".");
+            10-Wiki is written only by the wiki synthesizer (plugins/proxai-wiki), never by chat
     ask   = every other folder: Hermes asks Nathan, and the ``pre_llm_call`` hook reads his NEXT
             message (typed, phone, or voice-note transcript). A plain yes arms the write; anything
             else cancels it. ``confirm`` only works once armed, so the model can't approve itself.
@@ -55,12 +56,12 @@ SCHEMA = {
     "name": "vault_write",
     "description": (
         "Write a note into Nathan's Obsidian vault on the host (the container's vault is read-only "
-        "outside _inbox/ and 10-Wiki/). Paths are relative to the vault, e.g. "
-        "'04-Knowledge/rust-notes.md'. Folders _inbox, 05-Brain-Dump and 10-Wiki are written right "
+        "outside _inbox/). Paths are relative to the vault, e.g. "
+        "'04-Knowledge/rust-notes.md'. Folders _inbox and 05-Brain-Dump are written right "
         "away. Every other folder needs Nathan's permission: action=write returns a question; ask "
         "him exactly that and STOP; the system reads his reply. confirm: only after the system "
-        "tells you he said yes. 01-Personal, 07-Security, AGENTS.md and CLAUDE.md can never be "
-        "written. how: create (new note, fails if it exists), replace (whole note; the old one is "
+        "tells you he said yes. 01-Personal, 07-Security, 10-Wiki (the wiki synthesizer writes it: "
+        "Nathan says 'update the wiki'), AGENTS.md and CLAUDE.md can never be written. how: create (new note, fails if it exists), replace (whole note; the old one is "
         "backed up), append (add to the end). Never claim a note was saved unless the result says "
         "ok. status: the folder rules and any pending request. cancel: drop a pending request."
     ),
@@ -325,7 +326,7 @@ def is_yes(user_message) -> bool:
 # Hermes hides plugin tools behind tool_search, and the local model rarely looks there. So it
 # reaches for write_file on the read-only vault. These two hooks point it at vault_write instead.
 _CONTAINER_VAULT = "/workspace/vault/"
-_CONTAINER_WRITABLE = ("_inbox", "10-Wiki")       # mounted read-write in the container already
+_CONTAINER_WRITABLE = ("_inbox",)                 # mounted read-write in the container already
 _FILE_TOOLS = {"write_file", "patch"}
 _SAVE_ASK = re.compile(
     r"\b(add|save|put|write|jot|note|log|capture|dump|file|store|record)\b.{0,80}?"
@@ -351,6 +352,10 @@ def _on_pre_tool_call(tool_name: str = "", args=None, **_kwargs):
     if rel.split("/")[0] in _CONTAINER_WRITABLE:
         return None
     rule = rules.rule_for(rel, rules.load_policy())
+    if rel.split("/")[0] == "10-Wiki":
+        return {"action": "block", "message": "Not written: the wiki is written only by the wiki synthesizer "
+                                              "(Claude Code). Tell Nathan he can say \"update the wiki\", or save "
+                                              "the note to _inbox/ and the wiki picks it up from there."}
     if rule == "never":
         return {"action": "block", "message": f"{rel} can never be written by ProxAI. Tell Nathan."}
     _where_now, can_ask = _where()
@@ -374,7 +379,8 @@ def _save_hint(user_message) -> dict | None:
         return None
     return {"context": "[vault-write] To save this in the vault use the vault_write tool (not write_file, the "
                        f"vault is read-only in the sandbox), e.g. {_call_example('05-Brain-Dump/<short-name>.md')}. "
-                       "05-Brain-Dump, 10-Wiki and _inbox are written right away; other folders need his yes. "
+                       "05-Brain-Dump and _inbox are written right away; other folders need his yes; never 10-Wiki "
+                       "(the wiki synthesizer writes it). "
                        "Report what the result says."}
 
 

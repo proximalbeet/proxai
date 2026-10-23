@@ -1,7 +1,20 @@
 {
-  "_comment": "Which vault folders Hermes may write with the vault_write tool. 'free' = writes without asking. 'never' = refused, and hidden from the writer job. Every other folder (and files at the vault root) = 'ask': Hermes asks Nathan first and writes only if his next message is a plain yes. Entries are folder or file paths relative to the vault. Changes apply on the next write (no restart). Names starting with '.' are always 'never'.",
-  "free": ["_inbox", "05-Brain-Dump", "10-Wiki"],
-  "never": ["01-Personal", "07-Security", "AGENTS.md", "CLAUDE.md"],
-  "extensions": [".md", ".txt", ".canvas"],
+  "_comment": "Which vault folders Hermes may write with the vault_write tool. 'free' = writes without asking. 'never' = refused, and hidden from the writer job. Every other folder (and files at the vault root) = 'ask': Hermes asks Nathan first and writes only if his next message is a plain yes. Entries are folder or file paths relative to the vault. Changes apply on the next write (no restart). Names starting with '.' are always 'never'. 10-Wiki is 'never' since 2026-10-23: only the wiki synthesizer (plugins/proxai-wiki) writes the wiki.",
+  "free": [
+    "_inbox",
+    "05-Brain-Dump"
+  ],
+  "never": [
+    "01-Personal",
+    "07-Security",
+    "10-Wiki",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "extensions": [
+    ".md",
+    ".txt",
+    ".canvas"
+  ],
   "max_bytes": 200000
 }

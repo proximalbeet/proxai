@@ -6,8 +6,8 @@ Nathan's yes.
 
 | Folder | What happens |
 |---|---|
-| `_inbox`, `05-Brain-Dump`, `10-Wiki` | **free**: written right away |
-| `01-Personal`, `07-Security`, `AGENTS.md`, `CLAUDE.md`, anything starting with `.` | **never**: refused |
+| `_inbox`, `05-Brain-Dump` | **free**: written right away |
+| `01-Personal`, `07-Security`, `10-Wiki` (only the wiki synthesizer writes it), `AGENTS.md`, `CLAUDE.md`, anything starting with `.` | **never**: refused |
 | everything else (`00-Daily`, `02-Projects`, `04-Knowledge`, …, files at the vault root) | **ask**: Hermes asks first |
 
 Change the lists in `policy.json` (no restart needed). Only `.md`, `.txt` and `.canvas` files, up to
