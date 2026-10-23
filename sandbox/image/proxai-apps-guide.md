@@ -17,7 +17,7 @@ icon.xml          optional: Android <vector>, 108x108 viewport, white shapes, ke
 
 - `id` is given to you; never change it. `name` max 40 chars. Bump `version` (1.0 → 1.1) on every
   change. `color` is the icon's accent.
-- `features`: only what the app uses, from: `vibrate`, `notifications`, `speech`, `ask`.
+- `features`: only what the app uses, from: `vibrate`, `notifications`, `speech`, `ask`, `pc-stats`.
 
 ## Rules
 
@@ -37,6 +37,24 @@ icon.xml          optional: Android <vector>, 108x108 viewport, white shapes, ke
     (returns false until Nathan allows notifications; say so in the UI)
   - `ProxAI.speak(text)` → feature `speech`
   - `await ProxAI.ask(prompt)` → feature `ask` (not connected yet: catch the error and degrade)
+  - `await ProxAI.pcStats()` → feature `pc-stats`: Nathan's PC (StormTrooper: RTX 5070 Ti, i9-13900K),
+    read through ProxMobile. Rejects with a message if ProxMobile can't reach the PC; show it and
+    retry every few seconds. Poll every 2-5 s while visible (`document.visibilityState`). Returns:
+    ```
+    {"watching": true, "age_s": 1,              // false/old = the PC's watcher is off or unreachable
+     "latest": {"time": "2026-10-22T22:41:07", "gpu_c": 41, "gpu_w": 25.3, "gpu_use": 0,
+                "vram_mib": 15724, "vram_total_mib": 16303, "fan_pct": 0, "sm_mhz": 1600,
+                "throttle": "0x0", "cpu_pkg_c": 55, "cpu_core_max_c": 60, "cpu_use": 3.5,
+                "ram_used_mb": 14000, "ram_avail_mb": 16800, "swap_mb": 5000,
+                "limits": {"gpu_warn_c": 75, "gpu_crit_c": 82, "gpu_power_warn_w": 250,
+                           "cpu_warn_c": 85, "cpu_crit_c": 95, "ram_warn_mb": 2048}},
+     "history": [{"minute": "21:42", "gpu_c": 41, "gpu_w": 43, "gpu_use": 0, "cpu_c": 60,
+                  "cpu_use": 9, "ram_free_mb": 16600}, ...],   // last 60 minutes, peaks per minute
+     "alerts": [{"id": 12, "time": "...", "level": "ALERT" | "CRIT", "kind": "gpu_t", "msg": "..."}]}
+    ```
+    Any value can be null. Colour against the limits (warn = amber, crit = red). The PC watches and
+    protects itself 24/7 and ProxMobile already notifies about alerts; the app is a live view.
+    Draw charts with inline SVG or canvas (no chart libraries: no network).
   - `ProxAI.app` → `{id, name, version, features}`
 - Keep it one screen where possible, clear labels, works one-handed. No tracking, no ads.
 

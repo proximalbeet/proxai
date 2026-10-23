@@ -146,6 +146,20 @@ class AppBuild(unittest.TestCase):
         expect("www/index.html is missing")
         self.assertFalse((bad / "dist").exists())
 
+    def test_7_pc_stats_app_can_see_proxmobile(self):
+        app = copy_example("pc-monitor")
+        meta = json.loads((app / "proxai-app.json").read_text())
+        meta.update({"id": "pc-monitor", "name": "PC Monitor", "features": ["pc-stats"]})
+        (app / "proxai-app.json").write_text(json.dumps(meta))
+        r = build("pc-monitor")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["permissions"], [])                        # no network permission
+        xml = sh(f"aapt2 dump xmltree --file AndroidManifest.xml /workspace/proxai/apps/pc-monitor/{r['apk']}",
+                 check=True).stdout
+        self.assertIn("queries", xml)
+        self.assertIn("com.proxai.hermes", xml)
+        self.assertNotIn("android.permission.INTERNET", xml)
+
     def test_6_custom_icon(self):
         app = copy_example("icon-app")
         meta = json.loads((app / "proxai-app.json").read_text())
