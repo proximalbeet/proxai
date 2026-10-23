@@ -59,7 +59,10 @@ class Base(unittest.TestCase):
         APPS.mkdir(parents=True)
         plugin._job = None
         plugin._last.clear()
-        self.env = {"HERMES_SESSION_PLATFORM": "api_server", "HERMES_SESSION_USER_NAME": "nathan"}
+        plugin._pending_build.clear()
+        plugin._pending_delete.clear()
+        self.env = {"HERMES_SESSION_PLATFORM": "api_server", "HERMES_SESSION_USER_NAME": "nathan",
+                    "HERMES_SESSION_ID": "s1"}
         plugin._session = lambda name: self.env.get(name, "")
         self.cc = FakeCC()
         plugin._cc_module = self.cc
@@ -67,8 +70,15 @@ class Base(unittest.TestCase):
         plugin._shell = lambda command, task_id=None, timeout=120: (
             self.shell.append(command) or {"output": '{"ok": true, "code": 2}', "exit_code": 0})
 
-    def call(self, **args):
-        return json.loads(plugin._handle(args, task_id="t1"))
+    def call(self, confirm=True, **args):
+        """The tool; create/update/rollback now only ask, so this also plays Nathan saying yes."""
+        r = json.loads(plugin._handle(args, task_id="t1"))
+        if not (confirm and r.get("needs_confirmation")):
+            return r
+        ctx = plugin._on_pre_llm_call(session_id=None, user_message="yes")["context"]
+        if "ALREADY started" in ctx:
+            return {"ok": True, "started": True, "app": r["app"]}
+        return {"ok": False, "busy": "Can't start yet" in ctx, "error": ctx}
 
     def wait_idle(self, timeout=5):
         end = time.time() + timeout
@@ -94,7 +104,7 @@ class Create(Base):
         r = self.call(action="create", request="a tip calculator that splits the bill", name="Tip Calc")
         self.assertTrue(r["ok"] and r["started"], r)
         self.assertEqual(r["app"], "tip-calc")
-        self.assertIn("Apps tab", r["tell_nathan"])
+        self.assertTrue(r["started"])
         self.wait_idle()
         call = self.cc.calls[0]
         self.assertEqual(call["args"]["project"], "apps")
@@ -199,8 +209,13 @@ class AppRequestHook(Base):
                            ("create an app that tracks my water", "")):
             self.assertEqual(plugin.guess_name(text), name, text)
 
-    def test_new_app_request_starts_the_build_itself(self):
+    def test_new_app_request_asks_first_then_builds_on_yes(self):
         r = self.hook("Build a pomodoro timer with a progress ring")
+        self.assertIn('Build a new app "Pomodoro Timer" with Claude Code', r["context"])
+        self.assertIn("Nothing has started", r["context"])
+        time.sleep(0.05)
+        self.assertEqual(self.cc.calls, [])
+        r = self.hook("yes")
         self.assertIn("ALREADY started", r["context"])
         self.assertIn("app id pomodoro-timer", r["context"])
         self.wait_idle()
@@ -212,8 +227,10 @@ class AppRequestHook(Base):
     def test_second_request_while_building_says_busy(self):
         self.cc.delay = 5
         self.hook("make me a habit tracker")
-        r = self.hook("make me a water tracker")
-        self.assertIn("can't start yet", r["context"])
+        self.hook("yes")
+        self.hook("make me a water tracker")
+        r = self.hook("yes")
+        self.assertIn("Can't start yet", r["context"])
         self.cc.release.set()
         self.wait_idle()
         self.assertEqual(len(self.cc.calls), 1)
@@ -221,6 +238,8 @@ class AppRequestHook(Base):
     def test_change_from_the_apps_tab_starts_an_update(self):
         make_app("pomodoro-timer", name="Pomodoro Timer")
         r = self.hook("Change my Pomodoro Timer app (pomodoro-timer): add a 50-minute focus option")
+        self.assertIn("Change Pomodoro Timer (pomodoro-timer)", r["context"])
+        r = self.hook("yes")
         self.assertIn("ALREADY started updating Pomodoro Timer", r["context"])
         self.wait_idle()
         task = self.cc.calls[0]["args"]["task"]
@@ -230,7 +249,8 @@ class AppRequestHook(Base):
     def test_plain_change_by_name_starts_an_update(self):
         make_app("pomodoro-timer", name="Pomodoro Timer")
         make_app("water-log", name="Water Log")
-        r = self.hook("add a dark mode toggle to my pomodoro timer")
+        self.hook("add a dark mode toggle to my pomodoro timer")
+        r = self.hook("yes")
         self.assertIn("pomodoro-timer", r["context"])
         self.wait_idle()
         self.assertIn("/workspace/proxai/apps/pomodoro-timer", self.cc.calls[0]["args"]["task"])
@@ -238,6 +258,8 @@ class AppRequestHook(Base):
     def test_rollback_from_the_versions_dialog(self):
         make_app("pomodoro-timer", name="Pomodoro Timer", builds=(1, 2))
         r = self.hook("Roll back my Pomodoro Timer app (pomodoro-timer) to build 1 (version 1.0).")
+        self.assertIn("Roll Pomodoro Timer back to build 1?", r["context"])
+        r = self.hook("yes")
         self.assertIn("rolling Pomodoro Timer back to build 1", r["context"])
         self.wait_idle()
         self.assertEqual(self.shell[-1], "proxai-app-build --rollback 1 /workspace/proxai/apps/pomodoro-timer")
@@ -324,6 +346,7 @@ class DeleteApps(Base):
         r = self.hook("remove the reset button from my pomodoro timer app")
         self.assertNotIn("Delete Pomodoro Timer", (r or {}).get("context", ""))
         self.assertEqual(plugin._pending_delete, {})
+        self.hook("yes")
         self.wait_idle()
         self.assertEqual(len(self.cc.calls), 1)                 # started an update instead
         make_app("pomodoro-timer", name="Pomodoro Timer")      # (the fake builder renamed it)
@@ -356,11 +379,39 @@ class DeleteApps(Base):
         # The phone's time note in front of the message doesn't get in the way.
         r = plugin._on_pre_llm_call(session_id="s9", user_message="[Phone time: Friday 2026-10-23 12:29 "
                                     "(America/Detroit); by voice]\nbuild me a tip calculator")
-        self.assertIn("ALREADY", r["context"])
-        self.wait_idle()
+        self.assertIn("Nothing has started", r["context"])
         for msg in ("make me a quick html page with a timer right here", "build a timer in the chat",
                     "make a tip calculator as an html file"):
             self.assertFalse(plugin.is_new_app_request(msg), msg)
+
+    def test_no_yes_no_build(self):
+        # 10-23: "build me an app that links my debit card and invests..." started on its own.
+        r = self.hook("Will you please build me an app that I can link my debit card to and it invests for me")
+        self.assertIn("Say yes to start", r["context"])
+        self.assertIn("NOT started", self.hook("no, I was just asking")["context"])
+        self.assertIsNone(self.hook("yes"))              # the question is gone
+        time.sleep(0.05)
+        self.assertEqual(self.cc.calls, [])
+        # The tool only asks too.
+        r = self.call(confirm=False, action="create", request="a tip calculator", name="Tip Calc")
+        self.assertTrue(r["needs_confirmation"])
+        self.assertIn('Build a new app "Tip Calc"', r["ask_nathan"])
+        self.assertIn("NOT started", self.hook("hmm make it blue")["context"])
+        self.assertEqual(self.cc.calls, [])
+
+    def test_stop_the_build(self):
+        self.cc.delay = 5
+        self.hook("make me a habit tracker")
+        self.hook("yes")
+        time.sleep(0.05)
+        r = self.hook("stop the build")
+        self.assertIn("was stopped", r["context"])
+        self.assertIn("pkill -TERM -P", self.shell[-1])
+        self.cc.release.set()
+        self.wait_idle()
+        self.assertEqual(plugin._last["habit-tracker"]["error"], "Stopped by Nathan")
+        self.assertFalse(self.call(action="stop")["ok"])                  # nothing running now
+        self.assertIsNone(self.hook("stop the build"))                    # nothing to stop: left to the model
 
     def test_failed_update_with_no_build_restores_ready(self):
         self.cc.ok = False

@@ -48,5 +48,10 @@ RUN apt-get update \
  && npm cache clean --force
 ENV NODE_PATH=/usr/local/lib/node_modules \
     PROXAI_CHROMIUM=/usr/bin/chromium
+# Login shells (bash -l: Hermes's terminal, cc-run) rebuild PATH from /etc/profile; keep the tools.
+RUN printf '%s\n' 'export JAVA_HOME=/opt/jdk17 ANDROID_HOME=/opt/android-sdk' \
+      'export PATH=/opt/jdk17/bin:/opt/android-sdk/build-tools/35.0.0:$PATH' \
+      'export NODE_PATH=/usr/local/lib/node_modules PROXAI_CHROMIUM=/usr/bin/chromium' > /etc/profile.d/proxai-tools.sh
 COPY proxai-app-check /usr/local/bin/proxai-app-check
-RUN chmod 755 /usr/local/bin/proxai-app-check && chromium --version && node -e "require('playwright-core')"
+RUN chmod 755 /usr/local/bin/proxai-app-check && chromium --version && node -e "require('playwright-core')" \
+ && env -i HOME=/root bash -lc 'command -v java apksigner && node -e "require(\"playwright-core\")"'

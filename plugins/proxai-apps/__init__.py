@@ -62,15 +62,15 @@ SCHEMA = {
         "installed from ProxMobile's Apps tab. Use this whenever he asks for an app, tool, tracker, "
         "game, calculator, etc. on the phone; don't write the app into the chat. "
         "create: a new app from `request` (+ optional short `name`). update: change app `app` as "
-        "`request` says. rollback: rebuild app `app` from its older build `code`. These start in the "
-        "background and return at once: tell Nathan it's building and that progress and the Install "
-        "button are in the Apps tab (building takes a few minutes). status: one app's progress and "
-        "builds. list: all apps. Only one build runs at a time."
+        "`request` says. rollback: rebuild app `app` from its older build `code`. These never start "
+        "right away: they return a question; ask Nathan exactly that and STOP. Only his yes starts the "
+        "build (the system reads his reply). stop: end the build that's running. status: one app's "
+        "progress and builds. list: all apps. Only one build runs at a time."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["create", "update", "rollback", "status", "list"]},
+            "action": {"type": "string", "enum": ["create", "update", "rollback", "stop", "status", "list"]},
             "request": {"type": "string", "description": "What the app should do / what to change, in Nathan's words plus any details you know."},
             "name": {"type": "string", "description": "create: short app name (max 40 chars)."},
             "app": {"type": "string", "description": "update/rollback/status: the app id (from list)."},
@@ -238,13 +238,18 @@ def _run_job(kind: str, app_id: str, request: str, name: str, code: int | None, 
                 job.pop("model")
                 cc = json.loads(_cc()._handle_claude_code(job, task_id=task_id, session_id=f"proxai-app-{app_id}"))
             status = _read_json(APPS_HOST / app_id / "status.json", {})
-            ok = bool(cc.get("ok")) and status.get("state") == "built"
+            stopped = bool((_job or {}).get("stopped"))
+            ok = bool(cc.get("ok")) and status.get("state") == "built" and not stopped
             result = {"ok": ok, "summary": (cc.get("result") or "")[:800],
-                      "error": None if ok else (cc.get("error") or f"build ended in state {status.get('state')}")}
+                      "error": None if ok else ("Stopped by Nathan" if stopped else
+                                                (cc.get("error") or f"build ended in state {status.get('state')}"))}
+            if stopped and status.get("state") == "failed":
+                status["state"] = "stopping"      # overwrite Claude's failure line with "stopped"
             if not ok and status.get("state") not in ("failed", "built"):
                 if kind == "update" and status.get("last_build"):
-                    # Nothing was built (e.g. Claude Code declined the change): the last build still stands.
-                    msg = "No changes made: " + (result.get("summary") or str(result["error"]))[:180]
+                    # Nothing was built (stopped, or Claude Code declined the change): the last build stands.
+                    msg = ("Stopped; still on the last build" if stopped else
+                           "No changes made: " + (result.get("summary") or str(result["error"]))[:180])
                     _shell(f"proxai-app-build --status built {shlex.quote(msg)} {d}", task_id=task_id, timeout=60)
                 else:
                     _shell(f"proxai-app-build --status failed {shlex.quote(str(result['error'])[:200])} {d}",
@@ -301,6 +306,9 @@ def _handle(args: dict, task_id=None, session_id=None, **_kwargs) -> str:
         info = app_info(str(args.get("app", "")))
         return json.dumps({"ok": True, **info} if info else {"ok": False, "error": "no app with that id; use list"})
 
+    if action == "stop":
+        name = stop_build(task_id)
+        return json.dumps({"ok": bool(name), "stopped": name} if name else {"ok": False, "error": "Nothing is building."})
     if action not in ("create", "update", "rollback"):
         return json.dumps({"ok": False, "error": f"unknown action '{action}'"})
     if not allowed:
@@ -313,12 +321,7 @@ def _handle(args: dict, task_id=None, session_id=None, **_kwargs) -> str:
             return json.dumps({"ok": False, "error": "request is empty: what should the app do?"})
         name = str(args.get("name") or "").strip()[:40]
         app_id = new_id(name or request[:40])
-        err = _start("create", app_id, request, name, None, task_id)
-        if err:
-            return json.dumps({"ok": False, "busy": True, "error": err})
-        return json.dumps({"ok": True, "started": True, "app": app_id,
-                           "tell_nathan": f"Building {name or 'your app'} now; it takes a few minutes. Progress "
-                                          "and the Install button are in the Apps tab."})
+        return json.dumps(_tool_proposal("create", app_id, request, name, None, session_id, task_id))
 
     app_id = str(args.get("app", ""))
     if not app_info(app_id):
@@ -326,21 +329,13 @@ def _handle(args: dict, task_id=None, session_id=None, **_kwargs) -> str:
     if action == "update":
         if not request:
             return json.dumps({"ok": False, "error": "request is empty: what should change?"})
-        err = _start("update", app_id, request, app_info(app_id)["name"], None, task_id)
-        if err:
-            return json.dumps({"ok": False, "busy": True, "error": err})
-        return json.dumps({"ok": True, "started": True, "app": app_id,
-                           "tell_nathan": "Updating it now; the Apps tab shows progress and an Update button when it's ready."})
+        return json.dumps(_tool_proposal("update", app_id, request, app_info(app_id)["name"], None, session_id, task_id))
 
     code = args.get("code")
     codes = [b["code"] for b in app_info(app_id)["builds"]]
     if not isinstance(code, int) or code not in codes:
         return json.dumps({"ok": False, "error": f"code must be one of this app's builds: {codes}"})
-    err = _start("rollback", app_id, "", app_info(app_id)["name"], code, task_id)
-    if err:
-        return json.dumps({"ok": False, "busy": True, "error": err})
-    return json.dumps({"ok": True, "started": True, "app": app_id,
-                       "tell_nathan": f"Rolling back to build {code}; it shows up as a new version to install in the Apps tab."})
+    return json.dumps(_tool_proposal("rollback", app_id, "", app_info(app_id)["name"], code, session_id, task_id))
 
 
 # ---- hint for app requests --------------------------------------------------------------------
@@ -476,6 +471,60 @@ def change_request(text: str) -> tuple[str, str, int | None] | None:
     return None
 
 
+# ---- confirm before building, stop while building (Nathan 10-23: a build started on its own and
+# couldn't be stopped) ------------------------------------------------------------------------------
+
+_pending_build: dict[str, dict] = {}     # session -> {"kind", "app", "request", "name", "code", "created"}
+_CONFIRM_SECS = 600
+_STOP = re.compile(r"\b(stop|cancel|abort|kill|halt)\b.{0,40}\b(build|building|builder|app|it|that)\b", re.I | re.S)
+
+
+def question(kind: str, app_id: str, request: str, name: str, code) -> str:
+    if kind == "create":
+        return (f"Build a new app \"{name or app_id}\" with Claude Code on the PC? It takes a few minutes and "
+                "uses your Claude plan. Say yes to start.")
+    if kind == "update":
+        return f"Change {name} ({app_id}): \"{request[:140]}\"? Claude Code rebuilds it. Say yes to start."
+    return f"Roll {name} back to build {code}? Say yes to start."
+
+
+def _session_keys(session_id=None) -> set[str]:
+    return {k for k in (session_id, _session("HERMES_SESSION_ID")) if k}
+
+
+def propose(kind: str, app_id: str, request: str, name: str, code, session_id=None, task_id=None) -> str:
+    """Remember the build; Nathan's next message must be a yes (read by the hook). Returns the question."""
+    p = {"kind": kind, "app": app_id, "request": request, "name": name, "code": code, "created": time.time(),
+         "task_id": task_id}
+    for k in _session_keys(session_id) or {"cli"}:
+        _pending_build[k] = p
+    _log({"app": app_id, "kind": kind, "proposed": True, "request": request[:300]})
+    return question(kind, app_id, request, name, code)
+
+
+def _tool_proposal(kind, app_id, request, name, code, session_id, task_id=None) -> dict:
+    return {"ok": True, "needs_confirmation": True, "app": app_id,
+            "ask_nathan": propose(kind, app_id, request, name, code, session_id, task_id),
+            "note": "Nothing started yet. Ask Nathan exactly that and STOP; the system reads his reply."}
+
+
+def _ask_context(q: str) -> dict:
+    return {"context": f"[proxai-apps] Nothing has started. Do NOT call any tool and don't write the app. Ask Nathan "
+                       f"exactly: \"{q}\" and stop. The system reads his next message."}
+
+
+def stop_build(task_id=None) -> str | None:
+    """Ends the running Claude Code build (the app keeps its files; an update keeps its last build)."""
+    job = _job
+    if job is None:
+        return None
+    job["stopped"] = True
+    _shell("for p in $(pgrep -f 'cc-run --project apps '); do pkill -TERM -P $p; done; true",
+           task_id=task_id, timeout=30)
+    _log({"app": job["app"], "kind": job["kind"], "stop_requested": True})
+    return job["name"]
+
+
 def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
     if parent_session_id:
         return None
@@ -484,6 +533,34 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
         return None
     text = _plain(user_message).strip()
     sid = session_id or ""
+    keys = _session_keys(sid) or {"cli"}
+    build = next((_pending_build[k] for k in keys if k in _pending_build), None)
+    for k in keys:
+        _pending_build.pop(k, None)
+    if build and time.time() - build["created"] < _CONFIRM_SECS:
+        if _YES.match(text):
+            err = _start(build["kind"], build["app"], build["request"], build["name"], build["code"],
+                         build.get("task_id"))
+            if err:
+                return {"context": f"[proxai-apps] Can't start yet: {err} Tell Nathan in one sentence."}
+            _log({"app": build["app"], "kind": build["kind"], "by": "hook", "confirmed": True,
+                  "request": build["request"][:500], "started": True})
+            what = {"create": f"building \"{build['name'] or build['app']}\"",
+                    "update": f"updating {build['name']}",
+                    "rollback": f"rolling {build['name']} back to build {build['code']}"}[build["kind"]]
+            return {"context": f"[proxai-apps] Nathan said yes: Claude Code on the PC has ALREADY started {what} "
+                               f"(app id {build['app']}). Don't call any tool or write code. Tell him in one or two "
+                               "sentences: it takes a few minutes, progress and Install/Update are in the Apps tab, "
+                               "and he can say \"stop the build\" to stop it."}
+        _log({"app": build["app"], "kind": build["kind"], "declined": True})
+        if len(text) < 40 or not (is_new_app_request(text) or change_request(text)):
+            return {"context": "[proxai-apps] Nathan didn't say yes, so the app build was NOT started. Don't start "
+                               "it; answer his message normally."}
+    if _STOP.search(text) and not _QUESTION.search(text) and _job is not None and not _DELETE_VERB.search(text):
+        name = stop_build()
+        return {"context": f"[proxai-apps] Done: the build of {name} was stopped (Claude Code ended). Its card in "
+                           "the Apps tab shows \"Stopped by Nathan\"; an update keeps the build he had. Tell him in "
+                           "one sentence."}
     pend = _pending_delete.pop(sid, None)
     if pend and time.time() - pend["created"] < _DELETE_SECS:
         if _YES.match(text):
@@ -519,29 +596,11 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
         if kind == "rollback" and code not in [b["code"] for b in info["builds"]]:
             return {"context": f"[proxai-apps] {name} has no build {code}. Tell Nathan which builds exist: "
                                f"{[b['code'] for b in info['builds']]}."}
-        err = _start(kind, app_id, "" if kind == "rollback" else text[:MAX_REQUEST], name, code, None)
-        if err:
-            return {"context": f"[proxai-apps] Nathan asked to change {name}, but it can't start yet: {err} "
-                               "Tell him that in one sentence."}
-        _log({"app": app_id, "kind": kind, "by": "hook", "request": text[:500], "started": True})
-        what = f"rolling {name} back to build {code}" if kind == "rollback" else f"updating {name} as he asked"
-        return {"context": f"[proxai-apps] Done for you: the app builder (Claude Code on the PC) has ALREADY "
-                           f"started {what} (app id {app_id}). Do NOT write any app code or HTML and do NOT call "
-                           "proxai_app. Reply in one or two short sentences: it's on it, and when it's ready the "
-                           "Apps tab shows an Update button (his saved data stays)."}
+        return _ask_context(propose(kind, app_id, "" if kind == "rollback" else text[:MAX_REQUEST], name, code, sid))
     if is_new_app_request(text):
         name = guess_name(text)
         app_id = new_id(name or text[:40])
-        err = _start("create", app_id, text[:MAX_REQUEST], name, None, None)
-        if err:
-            return {"context": f"[proxai-apps] Nathan asked for a new app, but it can't start yet: {err} "
-                               "Tell him that in one sentence. Don't write the app here."}
-        _log({"app": app_id, "kind": "create", "by": "hook", "request": text[:500], "started": True})
-        return {"context": f"[proxai-apps] Done for you: the app builder (Claude Code on the PC) has ALREADY "
-                           f"started building this as \"{name or app_id}\" (app id {app_id}). Do NOT write the app "
-                           "or any HTML, and do NOT call proxai_app create. Reply in one or two short sentences: "
-                           "it's building now, takes a few minutes, and progress plus the Install button are in "
-                           "ProxMobile's Apps tab."}
+        return _ask_context(propose("create", app_id, text[:MAX_REQUEST], name, None, sid))
     if _APP_CHANGE.search(text) and not _IN_CHAT.search(text) and not _QUESTION.search(text):
         return {"context": HINT}
     return None

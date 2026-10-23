@@ -18,6 +18,8 @@
  * whose exact hash passed. Exit 0 = passed, 1 = problems found, 2 = usage error.
  */
 'use strict';
+// Login shells drop the image's NODE_PATH (10-23); find playwright-core where the image installs it.
+module.paths.push('/usr/local/lib/node_modules');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');

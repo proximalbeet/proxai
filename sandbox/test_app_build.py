@@ -179,6 +179,25 @@ class AppBuild(unittest.TestCase):
 
 
 
+class LoginShell(unittest.TestCase):
+    """10-23: Hermes's terminal and cc-run use login shells, which reset PATH and lost java
+    ("apksigner: exec: java: not found") and NODE_PATH. Check + build from a clean login shell."""
+
+    def test_check_and_build_from_a_clean_login_shell(self):
+        copy_example("login-shell")
+        cmd = ("env -i HOME=/tmp bash -lc 'cd /workspace/proxai/apps/login-shell && "
+               "proxai-app-check --script ui-test.js . >/dev/null; proxai-app-check . | tail -1; "
+               "proxai-app-build /workspace/proxai/apps/login-shell | tail -1'")
+        p = subprocess.run(["docker", "run", "--rm", "--network", "none", "--shm-size", "512m", "--user", UID,
+                            "-v", f"{WS}:/workspace/proxai", IMAGE, "bash", "-c", cmd],
+                           capture_output=True, text=True, timeout=600)
+        out = p.stdout.strip().splitlines()
+        self.assertTrue(out, p.stderr)
+        result = json.loads(out[-1])
+        self.assertTrue(result.get("ok"), p.stdout + p.stderr)
+        self.assertNotIn("java: not found", p.stdout + p.stderr)
+
+
 class AppCheck(unittest.TestCase):
     """proxai-app-check (headless Chromium in the image) and the build gate."""
 
