@@ -335,6 +335,20 @@ class DeleteApps(Base):
         self.assertIsNone(plugin.change_request("add a pomdoro button"))   # typo: no build started
         self.assertIsNone(plugin.find_app_loose("delete the timer"))         # generic word only
 
+    def test_old_container_without_model_flag_still_builds(self):
+        # 10-23: the live container predated the image with cc-run --model; builds failed in 3 s.
+        real = self.cc._handle_claude_code
+        def old_cc_run(args, task_id=None, session_id=None):
+            if "model" in args:
+                self.cc.calls.append(args)
+                return json.dumps({"ok": False, "result": "", "error": "unknown argument: --model"})
+            return real(args, task_id=task_id, session_id=session_id)
+        self.cc._handle_claude_code = old_cc_run
+        plugin._start("create", "tip-calc", "a tip calculator", "Tip Calc", None, None)
+        self.wait_idle()
+        self.assertEqual(json.loads((APPS / "tip-calc" / "status.json").read_text())["state"], "built")
+        self.assertNotIn("model", self.cc.calls[-1])
+
     def test_failed_update_with_no_build_restores_ready(self):
         self.cc.ok = False
         def declined(args, task_id=None, session_id=None):

@@ -92,4 +92,6 @@ __pycache__/
 !plugins/proxai-pc-stats/**
 !plugins/proxai-context/
 !plugins/proxai-context/**
+!plugins/proxai-github/
+!plugins/proxai-github/**
 __pycache__/

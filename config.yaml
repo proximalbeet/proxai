@@ -679,6 +679,7 @@ plugins:
     - proxai-apps
     - proxai-pc-stats
     - proxai-context
+    - proxai-github
   disabled: []
 _left_core_installed:
   - homeassistant

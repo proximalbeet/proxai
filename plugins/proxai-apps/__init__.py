@@ -227,11 +227,16 @@ def _run_job(kind: str, app_id: str, request: str, name: str, code: int | None, 
         else:
             _shell(f"mkdir -p {d} && proxai-app-build --status queued "
                    f"{shlex.quote('Starting: ' + (name or app_id))} {d}", task_id=task_id, timeout=60)
-            raw = _cc()._handle_claude_code(
-                {"task": build_task(kind, app_id, request, name), "project": "apps",
-                 "max_turns": BUILD_TURNS, "timeout_minutes": BUILD_MINUTES, "model": BUILD_MODEL},
-                task_id=task_id, session_id=f"proxai-app-{app_id}")
-            cc = json.loads(raw)
+            job = {"task": build_task(kind, app_id, request, name), "project": "apps",
+                   "max_turns": BUILD_TURNS, "timeout_minutes": BUILD_MINUTES, "model": BUILD_MODEL}
+            cc = json.loads(_cc()._handle_claude_code(job, task_id=task_id, session_id=f"proxai-app-{app_id}"))
+            if "unknown argument: --model" in str(cc.get("error") or ""):
+                # A sandbox container from before the image update (10-23): build on the default model and
+                # leave a note; `docker rm -f` the hermes-* container to get the new image.
+                _log({"app": app_id, "kind": kind, "note": "old sandbox container: cc-run has no --model; "
+                      "building on the default model. Recreate the container (docker rm -f hermes-*)."})
+                job.pop("model")
+                cc = json.loads(_cc()._handle_claude_code(job, task_id=task_id, session_id=f"proxai-app-{app_id}"))
             status = _read_json(APPS_HOST / app_id / "status.json", {})
             ok = bool(cc.get("ok")) and status.get("state") == "built"
             result = {"ok": ok, "summary": (cc.get("result") or "")[:800],

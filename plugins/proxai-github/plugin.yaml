@@ -1,0 +1,8 @@
+name: proxai-github
+version: "0.1.0"
+description: "Nathan's GitHub for ProxAI. Tool github: reads (repos, files, commits, issues, PRs, CI runs, code search) with no asking; writes (issues, comments, proxai/... branches + commits, draft PRs) only after Nathan's next message is a plain yes (DMs, phone, CLI). Never main or his branches, never merge/delete/workflows. Token on the host (secrets/github.json), never in the sandbox. Logged to the security log (GITHUB)."
+author: "prox"
+provides_tools:
+  - github
+provides_hooks:
+  - pre_llm_call
