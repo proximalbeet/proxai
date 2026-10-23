@@ -1,0 +1,7 @@
+{
+  "_comment": "Which vault folders Hermes may write with the vault_write tool. 'free' = writes without asking. 'never' = refused, and hidden from the writer job. Every other folder (and files at the vault root) = 'ask': Hermes asks Nathan first and writes only if his next message is a plain yes. Entries are folder or file paths relative to the vault. Changes apply on the next write (no restart). Names starting with '.' are always 'never'.",
+  "free": ["_inbox", "05-Brain-Dump", "10-Wiki"],
+  "never": ["01-Personal", "07-Security", "AGENTS.md", "CLAUDE.md"],
+  "extensions": [".md", ".txt", ".canvas"],
+  "max_bytes": 200000
+}

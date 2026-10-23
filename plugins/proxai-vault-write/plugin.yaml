@@ -1,0 +1,9 @@
+name: proxai-vault-write
+version: "1.0.0"
+description: "Vault writes with Nathan's permission. Tool vault_write (write/confirm/cancel/status): _inbox, 05-Brain-Dump and 10-Wiki are written right away; 01-Personal, 07-Security, AGENTS.md, CLAUDE.md never; every other folder only after Nathan's next message is a plain yes (checked by a pre_llm_call hook, DMs/phone/CLI only). Writes run as a sandboxed systemd user job with backups and the shared vault lock; logged to the security log and #bot-audit-log. Rules in policy.json."
+author: "prox"
+provides_tools:
+  - vault_write
+provides_hooks:
+  - pre_gateway_dispatch
+  - pre_llm_call
