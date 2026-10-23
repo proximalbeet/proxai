@@ -12,6 +12,9 @@ the sandbox as an APK that ProxMobile's Apps tab installs.
 * The phone reads progress and downloads APKs from the apps server (ProxMobile
   server/proxai_apps_server.py), which reads the same folder.
 * Every job is logged to ~/.local/state/proxai/apps.log (JSONL).
+* Hermes keeps plugin tools behind tool_search, and the local model doesn't go looking (10-22:
+  it wrote a Pomodoro app into the chat instead). A ``pre_llm_call`` hook therefore tells the
+  model about ``proxai_app`` whenever a phone/CLI message asks for an app.
 """
 from __future__ import annotations
 
@@ -316,6 +319,46 @@ def _handle(args: dict, task_id=None, session_id=None, **_kwargs) -> str:
                        "tell_nathan": f"Rolling back to build {code}; it shows up as a new version to install in the Apps tab."})
 
 
+# ---- hint for app requests --------------------------------------------------------------------
+
+_APP_ASK = re.compile(
+    r"\b(build|make|create|generate|code|design|write)\b.{0,80}\b(apps?|application|tool|tracker|timer|"
+    r"calculator|game|dashboard|widget|counter|planner|checklist|monitor|log)\b", re.I | re.S)
+_APP_CHANGE = re.compile(
+    r"\b(change|update|fix|add|remove|roll ?back|tweak|improve)\b.{0,80}\bapps?\b|\bapps?\b.{0,40}\b(roll ?back|build \d+)\b",
+    re.I | re.S)
+# "a grocery list I can check off" is an app; "make a list of groceries" is not.
+_LIST_APP = re.compile(r"\b(build|make|create)\b.{0,40}\blist\b.{0,20}\b(i|we|you) can\b", re.I | re.S)
+_IN_CHAT = re.compile(r"\b(quick|in (the|this) chat|right here|html (file|page)?)\b", re.I)
+HINT = ("[proxai-apps] This is an app request from Nathan's phone. Use the `proxai_app` tool: it is "
+        "behind tool_search (search for \"proxai_app\", then call it with tool_call). create = new app "
+        "(short `name` + the full request with every detail); update / rollback = an app made that way "
+        "(`list` shows the ids). Do NOT write the app's HTML in your reply. Once the build has started, "
+        "answer in one or two sentences: it's building, and progress and the Install button are in "
+        "ProxMobile's Apps tab.")
+
+
+def _plain(user_message) -> str:
+    if isinstance(user_message, list):
+        user_message = " ".join(p.get("text", "") for p in user_message if isinstance(p, dict))
+    return re.sub(r"\[[^\]]*\]", " ", str(user_message or ""))
+
+
+def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None, **_kwargs):
+    if parent_session_id:
+        return None
+    _where_now, allowed = _where()
+    if not allowed:
+        return None
+    text = _plain(user_message)
+    if _IN_CHAT.search(text):
+        return None   # Nathan asked for a quick in-chat app
+    if _APP_ASK.search(text) or _APP_CHANGE.search(text) or _LIST_APP.search(text):
+        return {"context": HINT}
+    return None
+
+
 def register(ctx) -> None:
     ctx.register_tool(name="proxai_app", toolset="proxai_apps", schema=SCHEMA, handler=_handle, emoji="📱",
                       description="Build phone apps (APKs) with Claude Code; installed from ProxMobile's Apps tab")
+    ctx.register_hook("pre_llm_call", _on_pre_llm_call)

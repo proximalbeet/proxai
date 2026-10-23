@@ -4,3 +4,5 @@ description: "Phase 15: phone apps built by Claude Code. Tool proxai_app (create
 author: "prox"
 provides_tools:
   - proxai_app
+provides_hooks:
+  - pre_llm_call

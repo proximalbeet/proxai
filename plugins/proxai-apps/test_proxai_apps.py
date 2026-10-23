@@ -186,5 +186,32 @@ class UpdateRollbackStatus(Base):
         self.assertTrue(self.call(action="list")["ok"])
 
 
+
+class AppRequestHint(Base):
+    def hint(self, text):
+        r = plugin._on_pre_llm_call(session_id="s1", user_message=text)
+        return bool(r and "proxai_app" in r["context"])
+
+    def test_app_requests_get_the_hint(self):
+        for text in ("Build a pomodoro timer with a progress ring", "make me a habit tracker",
+                     "Can you create an app that tracks my water?", "Make a grocery list I can check off",
+                     "build a workout interval timer that beeps", "make me a PC monitor app",
+                     "Change my Water Log app (water-log): add a 750 ml button",
+                     "roll back my tip calc app to build 1",
+                     [{"type": "text", "text": "Build me a calculator"}]):
+            self.assertTrue(self.hint(text), text)
+
+    def test_other_messages_dont(self):
+        for text in ("What's the weather tomorrow?", "remind me in 20 minutes to check the oven",
+                     "make me a quick timer right here in the chat", "how does the app builder work?",
+                     "what did we build today?", "turn on server mode", "make a list of groceries for tomorrow"):
+            self.assertFalse(self.hint(text), text)
+
+    def test_only_phone_and_cli(self):
+        self.env["HERMES_SESSION_PLATFORM"] = "discord"
+        self.assertFalse(self.hint("Build a pomodoro timer"))
+        self.env["HERMES_SESSION_PLATFORM"] = "api_server"
+        self.assertIsNone(plugin._on_pre_llm_call(session_id="s1", user_message="Build an app", parent_session_id="p"))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
