@@ -490,6 +490,52 @@ def notify(title: str, text: str = "") -> None:
         logger.warning("[scout] notice failed: %s", exc)
 
 
+_tracker_module = None
+
+
+def _tracker():
+    """tracker.py: the gig board (statuses, notes, hours, calendar blocks)."""
+    global _tracker_module
+    if _tracker_module is None:
+        spec = importlib.util.spec_from_file_location("proxai_scout_tracker", HERE / "tracker.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _tracker_module = mod
+    return _tracker_module
+
+
+def _loaded(folder: str, attr: str):
+    """The copy of a plugin Hermes loaded (its in-memory state, e.g. calendar rate limits, lives there)."""
+    target = (HERE.parent / folder / "__init__.py").resolve()
+    for mod in list(sys.modules.values()):
+        f = getattr(mod, "__file__", None)
+        try:
+            if f and Path(f).resolve() == target and hasattr(mod, attr):
+                return mod
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def calendar_create(title: str, start: str, end: str, description: str) -> dict:
+    """A block on Nathan's ProxAI calendar through proxai-calendar (its rate limit, log and audit line)."""
+    cal = _loaded("proxai-calendar", "_handle_calendar")
+    if cal is None:
+        raise RuntimeError("the calendar plugin isn't loaded")
+    r = json.loads(cal._handle_calendar({"action": "create", "title": title, "start": start, "end": end,
+                                         "description": description}))
+    if not r.get("ok"):
+        raise RuntimeError(r.get("error") or "calendar create failed")
+    return r["created"]
+
+
+def apply_board_requests() -> list[dict]:
+    done = _tracker().apply_inbox(calendar_create, notify)
+    for d in done:
+        _log({"board": d})
+    return done
+
+
 def _effort_ok(item: dict, state: dict) -> bool:
     pref = state.get("effort") or {}
     if not pref or time.time() > float(pref.get("until", 0)):
@@ -547,6 +593,10 @@ def run_scout(trigger: str, task_id=None) -> dict:
         notify("Scout run failed", f"{rec['error'][:300]}\nSay \"scout status\" for details.")
         return {"ok": False, **rec}
     gigs, ideas = read_result(run_id, lanes, src)
+    try:
+        rec["new_on_board"] = _tracker().add_picks(gigs, ideas, run_id)
+    except Exception as exc:      # the notice still goes out
+        logger.warning("[scout] board update failed: %s", exc)
     d = {"run": run_id, "time": rec["time"], "gigs": gigs, "ideas": ideas}
     _write_json(_dir() / "latest.json", d)
     try:
@@ -637,6 +687,14 @@ def _item(lane: str, n: int) -> dict | None:
     return next((x for x in d.get(lane, []) if x.get("n") == n), None)
 
 
+def _board(item: dict, status: str) -> bool:
+    try:
+        return _tracker().set_status(item["key"], status) is not None
+    except Exception as exc:
+        logger.warning("[scout] board status failed: %s", exc)
+        return False
+
+
 def add_feedback(kind: str, item: dict, words: str) -> None:
     f = _dir() / "feedback.md"
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -658,6 +716,12 @@ _DETAIL = re.compile(r"\b(tell me (more )?about|more (info |details )?(on|about)
 _BUILD = re.compile(r"\b(build|make|create)\b.{0,20}\bidea\s*(?:#|number\s*)?(\d{1,2})\b", re.I | re.S)
 _NO = re.compile(r"\b(not interested|skip|pass( on)?|no to|nah|don'?t (like|want)|hate|not for me)\b.{0,25}" + _REF, re.I | re.S)
 _MORE = re.compile(r"\b(more like|like|love|interested in|good one|great)\b.{0,20}" + _REF, re.I | re.S)
+_PITCHED = re.compile(r"\b(i )?(pitched|applied (to|for)|sent (the |a )?(pitch|message|reply) (for|to|on)|messaged|replied to)\b"
+                      r".{0,15}" + _REF.replace("(gig|job|idea)", "(gig|job)"), re.I | re.S)
+_WON = re.compile(r"\b(i )?(got|won|landed|booked|was hired for|got hired for)\b.{0,15}" +
+                  _REF.replace("(gig|job|idea)", "(gig|job)"), re.I | re.S)
+_DONE = re.compile(r"\b(finished|done with|completed|wrapped up)\b.{0,15}" + _REF.replace("(gig|job|idea)", "(gig|job)"),
+                   re.I | re.S)
 _ONLY = re.compile(r"\bonly\b.{0,20}\b(small|quick|short|medium)\b.{0,20}\b(gigs?|jobs?|ones)\b", re.I | re.S)
 _ANY_SIZE = re.compile(r"\b(any|all)\s+sizes?\b|\bbig(ger)? (ones|gigs|jobs) too\b|\bshow (all|every) gigs\b", re.I)
 _SHOW = re.compile(r"\b(show|list|see|read|any|what are|what'?s|got)\b.{0,25}\b(gigs|app ideas)\b|"
@@ -746,7 +810,21 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
         it = _item(_lane(m.group(m.lastindex - 1)), int(m.group(m.lastindex)))
         if it:
             add_feedback("Not interested", it, text)
-            return _say("Noted: the scout will show fewer like that. Tell Nathan in a few words.")
+            _board(it, "passed")
+            return _say("Noted: the scout will show fewer like that (moved to Passed on the gig board). "
+                        "Tell Nathan in a few words.")
+    for rx, status, said in ((_WON, "won", "marked Won on the gig board. He can block time for it on his calendar "
+                                          "from the Gig Board app"),
+                             (_DONE, "done", "marked Done on the gig board"),
+                             (_PITCHED, "pitched", "marked Pitched on the gig board")):
+        m = rx.search(text)
+        if m and not re.search(r"\b(not|didn'?t|haven'?t|don'?t)\b", text, re.I):
+            g = _item("gigs", int(m.group(m.lastindex)))
+            if not g:
+                return _say(f"The scout's latest results have no gig {m.group(m.lastindex)}. Tell Nathan in one sentence.")
+            ok = _board(g, status)
+            return _say(("Done: gig " + str(g["n"]) + f" ({g['title'][:60]}) {said}." if ok else
+                         "That gig isn't on the gig board.") + " Tell Nathan in one sentence.")
     m = _PITCH.search(text)
     if m:
         g = _item("gigs", int(m.group(m.lastindex)))
@@ -760,7 +838,9 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
         it = _item(_lane(m.group(m.lastindex - 1)), int(m.group(m.lastindex)))
         if it:
             add_feedback("Liked", it, text)
-            return _say("Noted: the scout will look for more like that. Tell Nathan in a few words.")
+            _board(it, "interested")
+            return _say("Noted: the scout will look for more like that (marked Interested on the gig board). "
+                        "Tell Nathan in a few words.")
     m = _DETAIL.search(text)
     if m:
         lane = _lane(m.group(m.lastindex - 1))
@@ -844,6 +924,7 @@ def _nightly_loop() -> None:
             state = load_state()
             now = dt.datetime.now()
             req = _dir() / "run-request"
+            apply_board_requests()
             if _nightly_due(now, load_sources(), state) and _job is None:
                 state["last_nightly"] = now.date().isoformat()
                 save_state(state)

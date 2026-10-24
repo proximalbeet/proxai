@@ -56,6 +56,8 @@ FEATURES = {
     "ask": [],
     # The PC's GPU/CPU/RAM stats, read through ProxMobile (no network permission needed).
     "pc-stats": [],
+    # The overnight scout's gig board (read + change requests), through ProxMobile 0.6.4+.
+    "scout": [],
 }
 NEEDS_APPROVAL = {"internet", "camera", "microphone", "location", "contacts", "sms", "storage"}
 MAX_WWW_BYTES = 25 * 1024 * 1024
@@ -210,9 +212,9 @@ def manifest(meta: dict, code: int) -> str:
     uses = "".join(f'    <uses-permission android:name="{p}" />\n' for p in perms)
     receiver = ('        <receiver android:name="com.proxai.shell.ReminderReceiver" android:exported="false" />\n'
                 if "notifications" in meta["features"] else "")
-    # pc-stats: the app asks ProxMobile's PcStatsProvider, so it must be able to see ProxMobile.
+    # pc-stats / scout: the app asks ProxMobile's PcStatsProvider, so it must be able to see ProxMobile.
     queries = ('    <queries>\n        <package android:name="com.proxai.hermes" />\n    </queries>\n'
-               if "pc-stats" in meta["features"] else "")
+               if {"pc-stats", "scout"} & set(meta["features"]) else "")
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="{meta['package']}" android:versionCode="{code}" android:versionName={quoteattr(meta['version'])}>

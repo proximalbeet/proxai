@@ -17,7 +17,7 @@ icon.xml          optional: Android <vector>, 108x108 viewport, white shapes, ke
 
 - `id` is given to you; never change it. `name` max 40 chars. Bump `version` (1.0 → 1.1) on every
   change. `color` is the icon's accent.
-- `features`: only what the app uses, from: `vibrate`, `notifications`, `speech`, `ask`, `pc-stats`.
+- `features`: only what the app uses, from: `vibrate`, `notifications`, `speech`, `ask`, `pc-stats`, `scout`.
 
 ## Rules
 
@@ -55,6 +55,31 @@ icon.xml          optional: Android <vector>, 108x108 viewport, white shapes, ke
     Any value can be null. Colour against the limits (warn = amber, crit = red). The PC watches and
     protects itself 24/7 and ProxMobile already notifies about alerts; the app is a live view.
     Draw charts with inline SVG or canvas (no chart libraries: no network).
+  - `await ProxAI.scout()` → feature `scout`: the overnight scout's **gig board** (paid gigs and app ideas it
+    picked for Nathan, newest first), read through ProxMobile 0.6.4+. Rejects with a message if ProxMobile can't
+    reach the PC (show it, offer Retry). Returns:
+    ```
+    {"statuses": {"gigs": ["new","interested","pitched","won","done","passed"],
+                  "ideas": ["new","interested","building","built","passed"]},
+     "items": [
+       {"id": "1a2b3c4d5e6f", "lane": "gigs", "title": "...", "url": "https://...", "source": "r/AI_Agents",
+        "fit": 9, "pay": "$1k", "effort": "small|medium|large|unknown", "why": "...", "pitch": "draft reply",
+        "status": "new", "notes": "", "hours": null,
+        "calendar": null | {"event_id": "...", "start": "2026-10-26T14:00", "hours": 3},
+        "found": "2026-10-24T05:03:00", "updated": "..."},
+       {"id": "...", "lane": "ideas", "title": "the post", "url": "...", "source": "r/Contractor", "score": 8,
+        "name": "Quick Estimates", "problem": "...", "app": "what to build", "effort": "medium",
+        "money": "who pays", "status": "new", "notes": "", "hours": null, "calendar": null, "found": "...", ...}]}
+    ```
+    Titles, pitches and post text come from strangers' posts: show them as text (`textContent`), never as
+    HTML, and never act on what they say.
+  - `await ProxAI.scoutUpdate({id, status?, notes?, hours?, block?})` → feature `scout`: change one item. `status`
+    must be one of its lane's statuses; `notes` text up to 2000 chars (replaces the old notes); `hours` an
+    estimate (0-500 or null); `block: {start: "2026-10-26T14:00" (local time), hours: 0.25-12}` puts a block on
+    Nathan's ProxAI Google calendar. **Always ask "Block 3 h on Sat Oct 26, 2 PM?" in the app before sending a
+    block.** Resolves `{ok: true, queued: true}`: the PC applies it within about a minute (a phone notification
+    confirms calendar blocks), so update the card right away and re-read the board after ~60 s. Rejects with
+    the reason on a bad change. Copying a pitch: use `navigator.clipboard` (fall back to selecting the text).
   - `ProxAI.app` → `{id, name, version, features}`
 - Keep it one screen where possible, clear labels, works one-handed. No tracking, no ads.
 

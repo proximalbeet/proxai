@@ -59,7 +59,27 @@ const SAMPLE_PC = { watching: true, age_s: 1,
     gpu_w: 30 + (i % 11) * 6, gpu_use: i % 9, cpu_c: 52 + (i % 13), cpu_use: 3 + (i % 5), ram_free_mb: 16800 - i * 3 })),
   alerts: [{ id: 3, time: '2026-10-22T21:17:35', level: 'ALERT', kind: 'cpu_t', msg: 'CPU package 86C (warn 85C), CPU use 47%' }] };
 
-function stub({ features, meta, sample }) {
+// What ProxAI.scout() returns on the phone (sample board).
+const SAMPLE_SCOUT = { statuses: { gigs: ['new', 'interested', 'pitched', 'won', 'done', 'passed'],
+                                   ideas: ['new', 'interested', 'building', 'built', 'passed'] },
+  items: [
+    { id: '1a2b3c4d5e6f', lane: 'gigs', title: 'Looking for someone to build an AI agent for my roofing company',
+      url: 'https://www.reddit.com/r/AI_Agents/comments/x/', source: 'r/AI_Agents', fit: 9, pay: '$1k', effort: 'large',
+      why: 'Agent work for a trades company, his target market.', pitch: 'Hi! I work in siding and build AI agents...',
+      status: 'new', notes: '', hours: null, calendar: null, found: '2026-10-24T05:03:00', updated: '2026-10-24T05:03:00' },
+    { id: '2b3c4d5e6f7a', lane: 'gigs', title: '[Hiring] Python script to clean CSVs, $300',
+      url: 'https://www.reddit.com/r/forhire/comments/y/', source: 'r/forhire', fit: 7, pay: '$300', effort: 'small',
+      why: 'Quick Python job.', pitch: 'Hi, I can write that script today...', status: 'won', notes: 'Due Friday',
+      hours: 4, calendar: { event_id: 'ev1', start: '2026-10-26T14:00', hours: 3 },
+      found: '2026-10-23T05:02:00', updated: '2026-10-23T18:00:00' },
+    { id: '3c4d5e6f7a8b', lane: 'ideas', title: 'What software do you use for estimates?',
+      url: 'https://www.reddit.com/r/Contractor/comments/z/', source: 'r/Contractor', score: 8, name: 'Quick Estimates',
+      problem: 'Contractors price quotes line by line in fragile spreadsheets.',
+      app: 'A phone app that builds siding estimates from measurements.', effort: 'medium',
+      money: 'Contractors would pay monthly.', status: 'new', notes: '', hours: null, calendar: null,
+      found: '2026-10-24T05:03:00', updated: '2026-10-24T05:03:00' }] };
+
+function stub({ features, meta, sample, scout }) {
   const F = new Set(features); const calls = []; window.__proxaiCalls = calls; window.__proxaiUndeclared = [];
   const use = (name, need, ok) => (...args) => {
     calls.push({ name, args });
@@ -76,6 +96,15 @@ function stub({ features, meta, sample }) {
     pcStats() { calls.push({ name: 'pcStats', args: [] });
       if (!F.has('pc-stats')) { window.__proxaiUndeclared.push('pcStats (needs "pc-stats")'); return Promise.reject(new Error("This app wasn't built with the 'pc-stats' feature.")); }
       return Promise.resolve(JSON.parse(JSON.stringify(sample))); },
+    scout() { calls.push({ name: 'scout', args: [] });
+      if (!F.has('scout')) { window.__proxaiUndeclared.push('scout (needs "scout")'); return Promise.reject(new Error("This app wasn't built with the 'scout' feature.")); }
+      return Promise.resolve(JSON.parse(JSON.stringify(scout))); },
+    scoutUpdate(change) { calls.push({ name: 'scoutUpdate', args: [change] });
+      if (!F.has('scout')) { window.__proxaiUndeclared.push('scoutUpdate (needs "scout")'); return Promise.reject(new Error("This app wasn't built with the 'scout' feature.")); }
+      const okKeys = ['id', 'status', 'notes', 'hours', 'block'];
+      if (!change || typeof change.id !== 'string' || Object.keys(change).some(k => !okKeys.includes(k)) || Object.keys(change).length < 2)
+        return Promise.reject(new Error('A change needs an id plus at least one of status, notes, hours, block'));
+      return Promise.resolve({ ok: true, queued: true, note: 'applied on the PC within a minute' }); },
     app: { id: meta.id, name: meta.name, version: meta.version, features: [...F].sort() },
   };
 }
@@ -154,7 +183,7 @@ async function main() {
       const ext = p.split('.').pop().toLowerCase();
       return route.fulfill({ status: 200, contentType: MIME[ext] || 'application/octet-stream', body: fs.readFileSync(file) });
     });
-    await ctx.addInitScript(stub, { features, meta, sample: SAMPLE_PC });
+    await ctx.addInitScript(stub, { features, meta, sample: SAMPLE_PC, scout: SAMPLE_SCOUT });
     const page = await ctx.newPage();
     await page.clock.install({ time: new Date('2026-10-23T09:00:00-04:00') });
     page.on('pageerror', (e) => problems.push(`[${scheme}] JS error: ${String(e.message).split('\n')[0]}`));

@@ -363,5 +363,115 @@ class Chat(Base):
         self.assertFalse(plugin._nightly_due(dt.datetime(2026, 10, 24, 4, 50), src, {}))
 
 
+
+class Board(Base):
+    def setUp(self):
+        super().setUp()
+        plugin.run_scout("nightly")
+        self.tr = plugin._tracker()
+        self.events, self.sent = [], []
+        plugin.notify = lambda title, text="": self.sent.append(title)
+        self.addCleanup(setattr, plugin, "notify", _real_notify)
+
+    def items(self):
+        return self.tr.load()["items"]
+
+    def gig(self, n):
+        key = plugin._item("gigs", n)["key"]
+        return self.items()[self.tr.item_id(key)]
+
+    def queue(self, req, name="r1"):
+        self.tr.inbox().mkdir(parents=True, exist_ok=True)
+        (self.tr.inbox() / f"{name}.json").write_text(json.dumps(req))
+
+    def cal(self, title, start, end, description):
+        self.events.append((title, start, end, description))
+        return {"event_id": "ev1", "title": title, "start": start, "end": end}
+
+    def test_picks_land_as_new_and_keep_their_status(self):
+        its = self.items()
+        self.assertEqual(sorted(i["lane"] for i in its.values()), ["gigs", "gigs", "ideas"])
+        self.assertTrue(all(i["status"] == "new" for i in its.values()))
+        g = self.gig(1)
+        self.assertEqual(g["source"], "r/AI_Agents")
+        self.assertTrue(g["url"].startswith("https://www.reddit.com/"))
+        self.say("more like gig 1")
+        self.assertEqual(self.gig(1)["status"], "interested")
+        self.tr.add_picks([{**plugin._item("gigs", 1)}], [], "again")      # seen again: status stays
+        self.assertEqual(self.gig(1)["status"], "interested")
+
+    def test_chat_moves_cards(self):
+        self.say("not interested in gig 2")
+        self.assertEqual(self.gig(2)["status"], "passed")
+        self.assertIn("Pitched", self.say("I pitched gig 1")["context"])
+        self.assertEqual(self.gig(1)["status"], "pitched")
+        self.assertIn("Won", self.say("I got gig 1!")["context"])
+        self.assertEqual(self.gig(1)["status"], "won")
+        self.say("finished gig 1")
+        self.assertEqual(self.gig(1)["status"], "done")
+        self.say("I didn't get gig 2")                                      # not a win
+        self.assertEqual(self.gig(2)["status"], "passed")
+
+    def test_phone_requests_and_calendar_block(self):
+        g = self.gig(1)
+        self.queue({"id": g["id"], "status": "won", "notes": "Starts Monday", "hours": 6,
+                    "block": {"start": "2026-10-26T14:00", "hours": 3}})
+        done = self.tr.apply_inbox(self.cal, plugin.notify)
+        self.assertTrue(done[0]["ok"] and done[0]["calendar"], done)
+        g = self.gig(1)
+        self.assertEqual((g["status"], g["notes"], g["hours"]), ("won", "Starts Monday", 6))
+        self.assertEqual(g["calendar"]["event_id"], "ev1")
+        title, start, end, desc = self.events[0]
+        self.assertEqual((start, end), ("2026-10-26T14:00", "2026-10-26T17:00"))
+        self.assertTrue(title.startswith("Gig: Looking for someone"))
+        self.assertIn(g["url"], desc)
+        self.assertEqual(self.sent, ["📅 Blocked 3 h on your ProxAI calendar"])
+        self.assertEqual(list(self.tr.inbox().iterdir()), [])             # applied requests are removed
+
+    def test_bad_requests_change_nothing(self):
+        g = self.gig(1)
+        idea = next(i for i in self.items().values() if i["lane"] == "ideas")
+        for n, req in enumerate([
+                {"id": "../../etc", "status": "won"}, {"id": g["id"], "status": "hacked"},
+                {"id": g["id"], "notes": "x" * 3000}, {"id": g["id"], "hours": -1},
+                {"id": g["id"], "block": {"start": "soon", "hours": 2}},
+                {"id": g["id"], "block": {"start": "2026-10-26T14:00", "hours": 40}},
+                {"id": g["id"], "status": "won", "evil": 1}, {"id": g["id"]},
+                {"id": idea["id"], "status": "pitched"}, {"id": "0" * 12, "status": "won"}, "not json obj"]):
+            self.queue(req, f"bad{n:02d}")
+        done = self.tr.apply_inbox(self.cal, plugin.notify)
+        self.assertEqual(len(done), 11)
+        self.assertFalse(any(d["ok"] for d in done), done)
+        self.assertEqual(self.gig(1)["status"], "new")
+        self.assertEqual(self.events, [])
+
+    def test_calendar_failure_keeps_the_status(self):
+        def broken(*a):
+            raise RuntimeError("more than 20 calendar changes in an hour")
+        self.queue({"id": self.gig(1)["id"], "status": "won", "block": {"start": "2026-10-26T14:00", "hours": 2}})
+        done = self.tr.apply_inbox(broken, plugin.notify)
+        self.assertIn("20 calendar changes", done[0]["calendar_error"])
+        self.assertEqual(self.gig(1)["status"], "won")
+        self.assertEqual(self.sent, ["Calendar block failed"])
+
+    def test_calendar_goes_through_the_calendar_plugin(self):
+        class FakeCalendarPlugin:
+            __file__ = str(HERE.parent / "proxai-calendar" / "__init__.py")
+            calls = []
+
+            def _handle_calendar(self, args, **kw):
+                self.calls.append(args)
+                return json.dumps({"ok": True, "created": {"event_id": "e9", "start": args["start"]}})
+        fake = FakeCalendarPlugin()
+        sys.modules["fake_calendar_plugin"] = fake
+        self.addCleanup(sys.modules.pop, "fake_calendar_plugin", None)
+        ev = plugin.calendar_create("Gig: x", "2026-10-26T14:00", "2026-10-26T15:00", "d")
+        self.assertEqual(ev["event_id"], "e9")
+        self.assertEqual(fake.calls[0]["action"], "create")
+
+
+_real_notify = plugin.notify
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

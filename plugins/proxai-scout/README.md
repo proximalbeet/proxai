@@ -28,6 +28,22 @@ Your preferences: `09-Career/scout-profile.md` in the vault (edit in Obsidian; `
 of the wiki). Without it the plugin's `profile.md` is used. Feedback:
 `~/.local/state/proxai/scout/feedback.md`.
 
+## Gig board (2026-10-24)
+
+Every pick also lands on a board (`~/.local/state/proxai/scout/tracker.json`, `tracker.py`) with a status,
+notes, an hours estimate and an optional calendar block:
+
+- Gigs: new → interested → pitched → won → done (or passed). Ideas: new → interested → building → built (or passed).
+- Chat: "more like gig 1" = interested, "not interested in gig 2" = passed, "I pitched gig 3", "I got gig 3",
+  "finished gig 3".
+- Apps: a ProxAI-built app with the `scout` feature reads the board (`ProxAI.scout()`) and sends changes
+  (`ProxAI.scoutUpdate({id, status, notes, hours, block})`) through ProxMobile 0.6.4+ and the apps server
+  (`GET /v1/scout`, `POST /v1/scout/update`). The apps server only drops each change in `scout/inbox/`; this
+  plugin checks it again and applies it within a minute, so it stays the only writer.
+- `block: {start, hours}` puts a block on the ProxAI calendar through proxai-calendar (its 20-writes-an-hour
+  limit, log and audit line) and sends a "📅 Blocked …" notice. The app asks before sending one.
+- Passed/done items older than 90 days are dropped; at most 1000 items.
+
 ## How it works
 
 1. **Read the feeds** (Python, in the gateway): Reddit RSS, one combined feed per group of
@@ -63,3 +79,4 @@ locally).
 ## Changelog
 
 - 0.1.0 (2026-10-23): first version.
+- 0.2.0 (2026-10-24): gig board (statuses, notes, hours, calendar blocks) for chat and ProxAI apps.
