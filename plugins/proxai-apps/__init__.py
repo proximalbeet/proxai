@@ -485,6 +485,7 @@ def change_request(text: str) -> tuple[str, str, int | None] | None:
 
 _pending_build: dict[str, dict] = {}     # session -> {"kind", "app", "request", "name", "code", "created"}
 _CONFIRM_SECS = 600
+_SCOUT_IDEA = re.compile(r"\b(build|make|create)\b.{0,20}\bidea\s*(#|number\s*)?\d{1,2}\b", re.I | re.S)
 _STOP = re.compile(r"\b(stop|cancel|abort|kill|halt)\b.{0,40}\b(build|building|builder|app|it|that)\b", re.I | re.S)
 
 
@@ -697,6 +698,8 @@ def _on_pre_llm_call(session_id=None, user_message=None, parent_session_id=None,
             names = ", ".join(f"{a['name']} ({a['app']})" for a in list_apps()) or "none"
             return {"context": f"[proxai-apps] Nathan wants to delete an app, but it's not clear which. The PC's apps: "
                                f"{names}. Ask him which one. Don't delete anything yourself."}
+    if _SCOUT_IDEA.search(text):
+        return None     # "build idea 2": proxai-scout proposes it (the yes still comes here)
     change = change_request(text)
     if change:
         kind, app_id, code = change

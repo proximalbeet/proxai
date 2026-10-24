@@ -1,0 +1,8 @@
+name: proxai-scout
+version: "0.1.0"
+description: "Overnight scout for paid gigs and app ideas: reads Reddit RSS, HN 'Who is hiring?' and RemoteOK (sources.json), Claude Code (Sonnet, Opus fallback; file tools only, no shell/web/connectors) picks what fits Nathan (09-Career/scout-profile.md + his feedback), one phone notice in the morning. Read-only: never sends or applies. 'pitch gig 2', 'build idea 1' (asks through proxai-apps), 'not interested in gig 3', 'only small gigs'. Nightly 05:00 or 'run the scout'."
+author: "prox"
+provides_tools:
+  - proxai_scout
+provides_hooks:
+  - pre_llm_call

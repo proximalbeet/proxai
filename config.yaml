@@ -683,6 +683,7 @@ plugins:
     - proxai-style
     - proxai-wiki
     - proxai-schedule
+    - proxai-scout
   disabled: []
 _left_core_installed:
   - homeassistant

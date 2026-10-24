@@ -100,4 +100,6 @@ __pycache__/
 !plugins/proxai-wiki/**
 !plugins/proxai-schedule/
 !plugins/proxai-schedule/**
+!plugins/proxai-scout/
+!plugins/proxai-scout/**
 __pycache__/

@@ -1,0 +1,27 @@
+{
+  "nightly_at": "05:00",
+  "model": "sonnet",
+  "fallback_model": "opus",
+  "max_items": {"gigs": 45, "ideas": 35},
+  "show": {"gigs": 5, "ideas": 3},
+  "min_score": 6,
+  "reddit_gap_seconds": 90,
+  "feeds": [
+    {"id": "reddit-hiring", "lane": "gigs", "kind": "reddit",
+     "subs": ["forhire", "freelance_forhire", "hiring", "jobbit"],
+     "skip": "\\[\\s*for\\s*hire\\s*\\]|\\bfor hire\\b"},
+    {"id": "reddit-agents", "lane": "gigs", "kind": "reddit",
+     "subs": ["AI_Agents", "n8n", "automation"],
+     "match": "\\bhiring\\b|looking for (someone|a dev|a developer|an? expert|help building)|will pay|\\bbudget\\b|\\bpaid\\b|\\$\\s?\\d|freelanc|\\bcontract\\b"},
+    {"id": "hn-hiring", "lane": "gigs", "kind": "hn",
+     "match": "\\bcontract|freelanc|part[- ]time|\\bintern"},
+    {"id": "remoteok", "lane": "gigs", "kind": "remoteok",
+     "match": "\\bcontract|part[- ]time|\\bintern|freelanc",
+     "also": "python|android|kotlin|\\bai\\b|llm|automation|\\bagent"},
+    {"id": "reddit-ideas", "lane": "ideas", "kind": "reddit",
+     "subs": ["SomebodyMakeThis", "AppIdeas"]},
+    {"id": "reddit-trades", "lane": "ideas", "kind": "reddit",
+     "subs": ["Construction", "Contractor", "Roofing", "sweatystartup", "smallbusiness"],
+     "match": "is there (an?|any) (app|tool|software|program|way)|looking for (an?|some) (app|tool|software)|what (apps?|software|tools?) do (you|y'all) use|spreadsheet|automat|paperwork|scheduling|invoic|estimat|\\bquot(e|es|ing)\\b|wish there (was|were)|takes (forever|hours)"}
+  ]
+}

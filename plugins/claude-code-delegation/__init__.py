@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _LOG_PATH = Path.home() / ".local/state/proxai/claude-code.log"
 _AUDIT_CHANNEL = "bot-audit-log"
+_TOOLS_RE = re.compile(r"^(Read|Write|Edit|Glob|Grep)(,(Read|Write|Edit|Glob|Grep))*$")   # cc-run --tools (plugins only)
 _PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _MODELS = {"sonnet", "opus"}   # cc-run --model (other plugins may ask for one; the tool schema doesn't offer it)
 _MAX_TASK_CHARS = 20000
@@ -203,6 +204,7 @@ def _handle_claude_code(args: dict, task_id: str | None = None, session_id: str 
     turns = _clamp(args.get("max_turns"), _DEFAULT_TURNS, _MAX_TURNS)
     minutes = _clamp(args.get("timeout_minutes"), _DEFAULT_MINUTES, _MAX_MINUTES)
     model = str(args.get("model") or "").strip().lower()
+    tools = str(args.get("tools") or "").replace(" ", "")
     # chat_name looks like "Server / #channel / thread title"; keep just the channel.
     chat_name = _session("HERMES_SESSION_CHAT_NAME")
     hashed = [p.strip()[1:] for p in chat_name.split(" / ") if p.strip().startswith("#")]
@@ -220,12 +222,14 @@ def _handle_claude_code(args: dict, task_id: str | None = None, session_id: str 
         return refuse("project must be one folder name (letters, digits, . _ -) under ~/dev/proxai")
     if model and model not in _MODELS:
         return refuse(f"model must be one of {sorted(_MODELS)}")
+    if tools and not _TOOLS_RE.match(tools):
+        return refuse("tools must be a comma list of Read, Write, Edit, Glob, Grep")
 
     payload = base64.b64encode(task.encode("utf-8")).decode("ascii")
     seconds = minutes * 60
     command = (f"printf %s {payload} | base64 -d | "
                f"cc-run --project {project} --max-turns {turns} --timeout {seconds}"
-               + (f" --model {model}" if model else ""))
+               + (f" --model {model}" if model else "") + (f" --tools {tools}" if tools else ""))
 
     started = time.time()
     term = _run_and_wait(command, seconds + _GRACE_S, task_id=task_id, session_id=session_id)
