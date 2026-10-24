@@ -101,7 +101,27 @@ class FakeFeeds:
         raise AssertionError(url)
 
 
+def _hermes_checker():
+    """Hermes's own command checker (tools/approval_detection.py), when the Hermes venv runs the tests."""
+    try:
+        sys.path.insert(0, str(Path.home() / ".hermes" / "hermes-agent"))
+        from tools.approval_detection import detect_dangerous_command
+        return detect_dangerous_command
+    except Exception:
+        return None
+    finally:
+        sys.path.pop(0)
+
+
+HERMES_CHECK = _hermes_checker()
+
+
 def local_shell(command, task_id=None, timeout=120):
+    # A command Hermes would ask approval for fails here: a background job can't answer (10-23 the first
+    # live scout and wiki runs stopped on "parser limit", "script via heredoc", "recursive delete").
+    if HERMES_CHECK:
+        flagged, why = HERMES_CHECK(command)[:2]
+        assert not flagged, f"Hermes would ask approval ({why}): {command[:120]}"
     # Hermes's terminal refuses these (tools/approval_detection.py _command_parser_limit_exceeded);
     # 10-23 the first live run failed on a bare "printf %s <60k chars> >> file".
     assert len(command) <= 128_000, "over Hermes's command limit"

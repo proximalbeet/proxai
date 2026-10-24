@@ -32,7 +32,27 @@ plugin.WORK = str(WORK)                       # the "sandbox" is this machine in
 plugin.VAULT_SANDBOX = str(VAULT)
 
 
+def _hermes_checker():
+    """Hermes's own command checker (tools/approval_detection.py), when the Hermes venv runs the tests."""
+    try:
+        sys.path.insert(0, str(Path.home() / ".hermes" / "hermes-agent"))
+        from tools.approval_detection import detect_dangerous_command
+        return detect_dangerous_command
+    except Exception:
+        return None
+    finally:
+        sys.path.pop(0)
+
+
+HERMES_CHECK = _hermes_checker()
+
+
 def local_shell(command, task_id=None, timeout=120):
+    # A command Hermes would ask approval for fails here: a background job can't answer (10-23 the first
+    # live scout and wiki runs stopped on "parser limit", "script via heredoc", "recursive delete").
+    if HERMES_CHECK:
+        flagged, why = HERMES_CHECK(command)[:2]
+        assert not flagged, f"Hermes would ask approval ({why}): {command[:120]}"
     r = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=timeout)
     return {"output": r.stdout + r.stderr, "exit_code": r.returncode}
 
@@ -219,6 +239,30 @@ class Wiki(unittest.TestCase):
         self.assertTrue(plugin._nightly_due(dt.datetime(2026, 10, 24, 3, 31), pol, {}))
         self.assertFalse(plugin._nightly_due(dt.datetime(2026, 10, 24, 3, 31), pol, {"last_nightly": "2026-10-24"}))
         self.assertFalse(plugin._nightly_due(dt.datetime(2026, 10, 24, 14, 0), pol, {}))
+
+
+class PingsWhenDone(unittest.TestCase):
+    """Chat promises a ping when a run he asked for ends; 10-23 23:31 a failed run sent nothing."""
+
+    def run_job(self, fn, label):
+        import threading
+        sent = []
+        real = plugin.notify
+        self.addCleanup(setattr, plugin, "notify", real)
+        plugin.notify = lambda title, text="": sent.append(title)
+        self.assertIsNone(plugin._run_in_background(fn, label))
+        for t in threading.enumerate():
+            if t.name == f"proxai-wiki-{label}":
+                t.join(10)
+        return sent
+
+    def test_failure_and_nothing_new_notify(self):
+        def boom():
+            raise plugin.Failed("python3 .proxai/sync.py: blocked")
+        self.assertEqual(self.run_job(boom, "update"), ["Wiki update failed"])
+        self.assertEqual(self.run_job(lambda: {"ok": True, "note": "nothing new"}, "update"), ["📚 Wiki: nothing new"])
+        self.assertEqual(self.run_job(lambda: {"ok": True, "note": "nothing new"}, "nightly"), [])
+        self.assertEqual(self.run_job(lambda: {"ok": True, "auto_error": "cc failed"}, "nightly"), ["Wiki nightly failed"])
 
 
 class RealSystemdJob(unittest.TestCase):
