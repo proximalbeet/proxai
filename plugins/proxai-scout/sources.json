@@ -12,7 +12,7 @@
      "skip": "\\[\\s*for\\s*hire\\s*\\]|\\bfor hire\\b"},
     {"id": "reddit-agents", "lane": "gigs", "kind": "reddit",
      "subs": ["AI_Agents", "n8n", "automation"],
-     "match": "\\bhiring\\b|looking for (someone|a dev|a developer|an? expert|help building)|will pay|\\bbudget\\b|\\bpaid\\b|\\$\\s?\\d|freelanc|\\bcontract\\b"},
+     "match": "\\[\\s*hiring\\s*\\]|\\b(we're|we are|i'm|i am) hiring\\b|looking for (someone|a dev|a developer|an? (expert|freelancer|consultant|builder)) (to|who)|\\bwill pay\\b|\\bpay (you|someone)\\b|\\bbudget (is|of)\\b|\\bpaid (gig|project|job|work)\\b"},
     {"id": "hn-hiring", "lane": "gigs", "kind": "hn",
      "match": "\\bcontract|freelanc|part[- ]time|\\bintern"},
     {"id": "remoteok", "lane": "gigs", "kind": "remoteok",
