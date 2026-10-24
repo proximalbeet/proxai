@@ -102,6 +102,10 @@ class FakeFeeds:
 
 
 def local_shell(command, task_id=None, timeout=120):
+    # Hermes's terminal refuses these (tools/approval_detection.py _command_parser_limit_exceeded);
+    # 10-23 the first live run failed on a bare "printf %s <60k chars> >> file".
+    assert len(command) <= 128_000, "over Hermes's command limit"
+    assert len(command) <= 4096 or any(c in command for c in ";&|\n"), "long command with no separator"
     r = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
     return {"exit_code": r.returncode, "output": r.stdout + r.stderr}
 
@@ -249,6 +253,11 @@ class Runs(Base):
         self.assertEqual(len(self.claude.calls), 1)
         self.assertEqual(len(plugin._schedule().notices.after(0)), 1)
         self.assertTrue((TMP / "state" / "scout" / "digests" / f"{r['run']}.md").exists())
+
+    def test_big_batch_goes_over_in_chunks_hermes_accepts(self):
+        data = ("x" * 200_000).encode()
+        plugin.put_file(str(TMP / "work" / "runs" / "big" / "items.json"), data)
+        self.assertEqual((TMP / "work" / "runs" / "big" / "items.json").read_bytes(), data)
 
     def test_old_image_is_not_retried_without_the_tool_limit(self):
         self.claude.error = "cc-run: unknown argument: --tools"
