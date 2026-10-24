@@ -331,6 +331,12 @@ def run_claude(notes: list[tuple[str, str]], policy: dict, task_id=None) -> dict
 
 # ---- writing into the vault -------------------------------------------------------------------
 
+# The job hides the home folder (ProtectHome=tmpfs), so it needs a Python outside it. 10-23 23:45 the gateway's
+# python3 (Hermes's own, under ~/.hermes/tools) was "Unable to locate executable" inside the job.
+# promote.py only uses the standard library.
+_JOB_PYTHON = next((p for p in ("/usr/bin/python3", "/usr/local/bin/python3") if os.path.exists(p)), "/usr/bin/python3")
+
+
 def _run_promote(req: dict) -> dict:
     """promote.py as a sandboxed systemd user job (sees only 10-Wiki, the workspace, its state)."""
     work = STATE_DIR / "wiki"
@@ -344,7 +350,7 @@ def _run_promote(req: dict) -> dict:
     argv = ["systemd-run", "--user", "--wait", "--collect", "--quiet", f"--unit=proxai-wiki-{req['id']}",
             *[x for p in props for x in ("-p", p)],
             "-E", f"PROXAI_VAULT={VAULT}", "-E", f"PROXAI_STATE_DIR={STATE_DIR}", "-E", f"PROXAI_WIKI_WORK={WORK_HOST}",
-            shutil.which("python3") or "/usr/bin/python3", str(HERE / "promote.py"), str(req_file)]
+            _JOB_PYTHON, str(HERE / "promote.py"), str(req_file)]
     try:
         subprocess.run(argv, capture_output=True, text=True, timeout=180)
         return json.loads((work / "results" / f"{req['id']}.json").read_text(encoding="utf-8"))
@@ -377,8 +383,30 @@ def _mark(state: dict, notes, status: str) -> None:
         state["sources"][rel] = {"hash": h, "status": status, "time": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
 
+def finish_unpromoted(state: dict, task_id=None) -> int | None:
+    """An update whose pages were written but couldn't be copied into the vault (10-23 23:45: the job's
+    Python was missing) is copied in first; otherwise the vault sync in prepare() would drop its pages.
+    Returns the pages written, None when nothing was left over. Raises Failed if it still can't."""
+    left = state.get("unpromoted")
+    if not left:
+        return None
+    notes = [tuple(n) for n in left["notes"]]
+    sh("git checkout -q main", task_id)
+    r = promote(left["kind"], notes, state, task_id)
+    if not r.get("ok"):
+        raise Failed(f"the last update's pages still can't be copied into the vault: {r.get('error')}")
+    _mark(state, notes, "done")
+    state.pop("unpromoted", None)
+    save_state(state)
+    return len(r.get("written", []))
+
+
 def run_update(trigger: str, task_id=None) -> dict:
     policy, state = load_policy(), load_state()
+    finished = finish_unpromoted(state, task_id)
+    if finished is not None:
+        notify(f"📚 Wiki updated: {finished} pages", "From the last update (its copy into the vault had failed). "
+               "Say \"undo the last wiki update\" to undo.")
     found = scan(policy, state)
     summary = {"trigger": trigger, "auto": len(found["auto"]), "review": len(found["review"]),
                "waiting": found["waiting"]}
@@ -403,6 +431,7 @@ def run_update(trigger: str, task_id=None) -> dict:
                        f"From {len(found['auto'])} new or changed notes. Say \"undo the last wiki update\" to undo.")
             else:
                 summary["auto_error"] = r.get("error")
+                state["unpromoted"] = {"kind": "auto", "notes": found["auto"]}   # copied in next time
         else:
             _mark(state, found["auto"], "done")      # nothing worth a page
     if found["review"]:
@@ -438,6 +467,7 @@ def approve(task_id=None) -> dict:
     rev = state.get("review")
     if not rev:
         return {"ok": False, "error": "No wiki update is waiting."}
+    finish_unpromoted(state, task_id)
     prepare(task_id)
     notes = [tuple(n) for n in rev["notes"]]
     try:
@@ -477,6 +507,12 @@ def reject() -> dict:
 
 def undo(task_id=None) -> dict:
     state = load_state()
+    left = state.pop("unpromoted", None)
+    if left:      # the last update never reached the vault: drop it (the vault sync in prepare() removes its pages)
+        prepare(task_id)
+        _mark(state, [tuple(n) for n in left["notes"]], "rejected")
+        save_state(state)
+        return {"ok": True, "undone": f"{left['kind']} (it never reached the vault)", "files": 0, "error": None}
     if not state["promotions"]:
         return {"ok": False, "error": "There's no wiki update to undo."}
     last = state["promotions"][-1]

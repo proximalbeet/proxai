@@ -194,6 +194,35 @@ class Wiki(unittest.TestCase):
         self.assertIsNotNone(self.wiki("concepts/tries.md"))
         self.assertNotIn("04-Knowledge/private-ish.md", [n for c in self.claude.calls for n in c])
 
+    def test_failed_copy_is_finished_by_the_next_run_not_redone(self):
+        """10-23 23:45: pages were written but the copy into the vault failed (the job's Python was missing)."""
+        note("03-Courses/Data Structures/Tries.md")
+        plugin._run_promote = lambda req: {"ok": False, "error": "the promote job failed: no python"}
+        r = plugin.run_update("request")
+        self.assertIn("no python", r["auto_error"])
+        self.assertIsNone(self.wiki("concepts/tries.md"))
+        calls = len(self.claude.calls)
+        plugin._run_promote = lambda req: self._promote(req)
+        plugin.run_update("request")
+        self.assertIsNotNone(self.wiki("concepts/tries.md"))          # copied in, not dropped by the vault sync
+        self.assertEqual(len(self.claude.calls), calls)                # and not written again
+        self.assertNotIn("unpromoted", plugin.load_state())
+        self.assertEqual(plugin.load_state()["sources"]["03-Courses/Data Structures/Tries.md"]["status"], "done")
+
+    def test_undo_drops_an_update_that_never_reached_the_vault(self):
+        note("03-Courses/Data Structures/Tries.md")
+        plugin._run_promote = lambda req: {"ok": False, "error": "no python"}
+        plugin.run_update("request")
+        plugin._run_promote = lambda req: self._promote(req)
+        r = plugin.undo()
+        self.assertTrue(r["ok"], r)
+        self.assertIn("never reached", r["undone"])
+        plugin.run_update("request")
+        self.assertIsNone(self.wiki("concepts/tries.md"))              # dropped, not brought back
+
+    def test_job_python_is_outside_home(self):
+        self.assertFalse(plugin._JOB_PYTHON.startswith(str(Path.home())))
+
     def test_hand_edits_in_the_vault_are_kept(self):
         note("03-Courses/Data Structures/Stacks.md")
         plugin.run_update("request")
